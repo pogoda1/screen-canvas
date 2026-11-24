@@ -17,10 +17,9 @@ export function matchControl(frame, screenshot, { x, y, box }) {
   const top = Math.floor(box.y * scale);
   const rect = { x: left, y: top, width: Math.floor((box.x + box.width) * scale) - left,
     height: Math.floor((box.y + box.height) * scale) - top };
-  const actual = frame.crop(rect).toBitmap();
+  if (!frame.toBitmap().equals(source.toBitmap())) return;
   const shown = source.crop(rect).toBitmap();
   // A completely blank area provides no visual evidence of a control.
-  if (!shown.length || !actual.equals(shown) ||
-      !shown.some((channel, index) => index >= 4 && channel !== shown[index % 4])) return;
+  if (!shown.length || !shown.some((channel, index) => index >= 4 && channel !== shown[index % 4])) return;
   return { x: x / width, y: y / height };
 }

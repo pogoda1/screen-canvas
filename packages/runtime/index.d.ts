@@ -27,6 +27,7 @@ export interface Evidence {
   backgroundPending?: boolean;
   /** Normalized coordinates on the verified source frame. */
   origin?: { x: number; y: number };
+  originReason?: 'automatic' | 'different-scenario' | 'control-not-in-frame';
 }
 export interface CaptureRule {
   source: string;

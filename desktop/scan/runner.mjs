@@ -25,19 +25,18 @@ async function settleRequests(capture, signal) {
 
 export async function crawlGraph(worker, graph, signal, update) {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
-  const jobs = [
-    ...graph.nodes.map(node => ({ node })),
-    ...graph.edges.map(edge => ({ edge }))
-  ];
-  let cursor = 0;
+  const frames = new Map();
+  const total = graph.nodes.length + graph.edges.length;
   let completed = 0;
-  async function run() {
-    while (!signal.aborted && cursor < jobs.length) {
-      const job = jobs[cursor++];
-      if (job.node) await captureNode(job.node);
-      else await observeEdge(job.edge);
-      if (!signal.aborted) update(++completed, jobs.length);
+  async function phase(items, visit) {
+    let cursor = 0;
+    async function run() {
+      while (!signal.aborted && cursor < items.length) {
+        await visit(items[cursor++]);
+        if (!signal.aborted) update(++completed, total);
+      }
     }
+    await Promise.all([run(), run()]);
   }
 
   async function captureNode(node) {
@@ -83,8 +82,10 @@ export async function crawlGraph(worker, graph, signal, update) {
           node.requests = localRequests(records);
           if (jobSignal.aborted) screenshot = undefined;
           node.capture = captureEvidence(node, expected, observed, screenshot, records, capture?.errors ?? []);
-          if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') node.screenshot = screenshot;
-          else node.diagnostics.push(node.capture.reason);
+          if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') {
+            node.screenshot = screenshot;
+            frames.set(node.id, { key: capture.frameKey, path: observed.pathname });
+          } else node.diagnostics.push(node.capture.reason);
         }
       }
       await capture?.close();
@@ -99,6 +100,7 @@ export async function crawlGraph(worker, graph, signal, update) {
     let initialPath;
     let after;
     let origin;
+    let originReason;
     let reason;
     let redirects;
     let jobSignal;
@@ -114,16 +116,20 @@ export async function crawlGraph(worker, graph, signal, update) {
         const source = await awaitScreen(capture, graph, jobSignal, { expected: edge.source, timeout, waitForNavigation: true });
         if (source.id !== edge.source || !source.ready) throw new Error(source.diagnostic?.message ?? 'The source screen was not observed');
         initialPath = source.pathname;
+        const sourceFrame = frames.get(edge.source);
         const screenshot = nodes.get(edge.source)?.screenshot;
-        const observeControl = screenshot && (async hit => {
+        const sameScenario = sourceFrame?.key === capture.frameKey && sourceFrame.path === source.pathname;
+        originReason = sourceFrame && !sameScenario ? 'different-scenario' : 'control-not-in-frame';
+        const observeControl = sameScenario && screenshot && (async () => {
           const ready = await awaitScreen(capture, graph, jobSignal, {
-            expected: edge.source, timeout: 1300, forCapture: true
+            expected: edge.source, timeout: 1600, forCapture: true
           });
-          if (!ready.ready || ready.id !== edge.source || ready.pathname !== initialPath ||
+          if (!ready.ready || ready.id !== edge.source || ready.pathname !== source.pathname ||
               ready.documentVersion !== source.documentVersion) return;
           const frame = await captureControlFrame(capture, jobSignal).catch(() => undefined);
-          const point = matchControl(frame, screenshot, hit);
-          if (point) return () => { origin = point; };
+          if (frame && await currentFrameMatches(capture, graph, jobSignal, ready)) {
+            return hit => { origin = matchControl(frame, screenshot, hit); };
+          }
         });
         await runAction(capture, edge, target, jobSignal, {
           observeControl,
@@ -182,13 +188,17 @@ export async function crawlGraph(worker, graph, signal, update) {
         if (backgroundFailure) evidence.backgroundFailure = backgroundFailure;
         if (actionPending) evidence.actionPending = true;
         if (backgroundPending) evidence.backgroundPending = true;
-        if (origin && (moved || evidence.status === 'confirmed')) evidence.origin = origin;
+        if (moved || evidence.status === 'confirmed') {
+          if (origin) evidence.origin = origin;
+          else evidence.originReason = originReason ?? 'automatic';
+        }
         edge.evidence = evidence;
       }
       await capture?.close();
     }
   }
 
-  update(0, jobs.length);
-  await Promise.all([run(), run()]);
+  update(0, total);
+  await phase(graph.nodes, captureNode);
+  await phase(graph.edges, observeEdge);
 }

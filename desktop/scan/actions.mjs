@@ -78,12 +78,11 @@ async function click(contents, query, begin, observeControl) {
   })()`);
   let hit = await locate(false) ?? await locate(true);
   if (!hit) throw new Error('The action control is unavailable');
-  if (observeControl && hit.visible) {
-    const accept = await observeControl(hit);
-    const current = await locate(false);
-    if (!current) throw new Error('The action control is unavailable');
-    if (current.visible && JSON.stringify(hit.box) === JSON.stringify(current.box)) accept?.();
-    hit = current;
+  if (observeControl) {
+    const accept = await observeControl();
+    hit = await locate(false) ?? await locate(true);
+    if (!hit) throw new Error('The action control is unavailable');
+    if (hit.visible) accept?.(hit);
   }
   const point = { x: hit.x, y: hit.y };
   // Send pointer events to this capture's Chromium target. The renderer picks

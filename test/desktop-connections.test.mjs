@@ -113,6 +113,8 @@ test('proportional frames anchor observed clicks and separate failed requests fr
         {id:'open',source:'route:/',target:'route:/done',label:'Next',steps:[{type:'click',selector:'#open'}]},
         {id:'wrong',source:'route:/',target:'route:/expected',label:'Different route',steps:[{type:'click',selector:'#wrong'}]},
         {id:'stay',source:'route:/',target:'route:/done',label:'Try again',steps:[{type:'click',selector:'#stay'}]},
+        {id:'different-state',source:'route:/',target:'route:/done',label:'Same button in another role',
+          role:'alternate',steps:[{type:'click',selector:'#open'}]},
         {id:'after-error',source:'route:/',target:'route:/done',label:'Continue after a failed request',
           steps:[{type:'click',selector:'#error-route'}]},
         {id:'after-navigation',source:'route:/',target:'route:/done',label:'Navigate before the response',
@@ -126,6 +128,7 @@ test('proportional frames anchor observed clicks and separate failed requests fr
         {id:'automatic',source:'route:/auto',target:'route:/done',label:'Automatic redirect',
           expectedPath:'/done',steps:[{type:'redirect'}]}
       ],
+      scenario(node, mode) { return { mode:mode ?? 'member' }; },
       createMocks() { return async ({path}) => {
         if (path === '/api/slow') await new Promise(resolve => setTimeout(resolve, 650));
         if (path === '/api/pending') await new Promise(resolve => setTimeout(resolve, 5000));
@@ -136,10 +139,12 @@ test('proportional frames anchor observed clicks and separate failed requests fr
       import React from 'react';
       import {createRoot} from 'react-dom/client';
       import {BrowserRouter, Navigate, Routes, Route, useNavigate} from 'react-router-dom';
+      import {getInitialScenario} from 'react-screen-canvas/browser';
       function Home() {
+        const alternate = getInitialScenario()?.mode === 'alternate';
         const go = useNavigate();
         const fail = () => fetch('/api/retry', {method:'POST'});
-        return <main style={{minHeight:1650}}><h1>Canvas actions</h1>
+        return <main style={{minHeight:1650}}><h1>{alternate ? 'Other state' : 'Canvas actions'}</h1>
           <button id="open" style={{position:'absolute',top:180,left:70,width:140,height:42}} onClick={() => go('/done')}>Next route</button>
           <button id="wrong" style={{position:'absolute',top:260,left:70,width:140,height:42}} onClick={() => go('/other')}>Different route</button>
           <button id="stay" style={{position:'absolute',top:330,left:70,width:140,height:42}} onClick={fail}>Try again</button>
@@ -190,6 +195,8 @@ test('proportional frames anchor observed clicks and separate failed requests fr
   const line = id => shell.locator('#connections > g > path[data-edge-id="' + id + '"]');
   assert.equal(await line('open').getAttribute('data-target'), 'route:/done');
   assert.equal(await line('open').getAttribute('data-origin'), 'control');
+  assert.equal(await line('different-state').getAttribute('data-origin'), 'screen');
+  assert.equal(await marks.locator('[data-edge-id="different-state"]').count(), 0);
   assert.equal(await line('wrong').getAttribute('data-target'), 'route:/other');
   assert.equal(await line('wrong').getAttribute('data-status'), 'unverified');
   assert.equal(await line('wrong').getAttribute('data-origin'), 'control');
@@ -198,6 +205,8 @@ test('proportional frames anchor observed clicks and separate failed requests fr
   assert.equal(await line('stay').count(), 0);
   assert.equal(await line('missing').count(), 0);
   const detail = id => shell.locator('.edge-details li[data-edge-id="' + id + '"]');
+  await detail('different-state').getByText(
+    'Источник стрелки · Экран · роль или состояние отличаются от кадра', { exact: true }).waitFor();
   await detail('stay').getByText('Ошибка без перехода · POST /api/retry → 501', { exact: true }).waitFor();
   await detail('after-error').getByText('Переход наблюдался при ошибке · POST /api/retry → 501', { exact: true }).waitFor();
   await detail('wrong').getByText('Наблюдаемый путь · /other', { exact: true }).waitFor();

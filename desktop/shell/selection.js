@@ -81,7 +81,13 @@ function directionGroup(title, edges, neighborId, neighbors) {
       item.append(paragraph(evidence.targetReady ? 'Цель перехода готова' : 'Готовность цели перехода не подтверждена'));
       if (evidence.targetReason) item.append(paragraph(evidence.targetReason, 'diagnostic'));
     }
-    const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' : 'Источник стрелки · Экран');
+    const originReasons = {
+      automatic: 'автоматический переход',
+      'different-scenario': 'роль или состояние отличаются от кадра',
+      'control-not-in-frame': 'элемент на исходном кадре не подтверждён'
+    };
+    const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' :
+      'Источник стрелки · Экран' + (originReasons[evidence.originReason] ? ' · ' + originReasons[evidence.originReason] : ''));
     if (source) item.append(paragraph(source));
     if (evidence.requestCheck) item.append(paragraph(evidence.requestCheck === 'verified'
       ? 'Заявленный обмен подтверждён' : 'Заявленный обмен не подтверждён'));

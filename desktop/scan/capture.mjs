@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { BrowserWindow } from 'electron';
 import { setTimeout } from 'node:timers/promises';
 import { addAbortListener } from 'node:events';
@@ -52,6 +53,8 @@ export async function createCapture(worker, nodeId, role, signal) {
   return Object.assign(capture, {
     navigation,
     mode: preview.scenario.mode,
+    // This fingerprint stays in the main process for the duration of the scan.
+    frameKey: createHash('sha256').update(JSON.stringify(preview.scenario)).digest('hex'),
     initialPath: new URL(preview.path, preview.origin).pathname,
     cursor: () => worker.call('cursor', { id: preview.id }),
     verify: (after, edge) => worker.call('verify', {
@@ -83,6 +86,7 @@ async function withBudget(operation, signal, ms) {
 export async function captureControlFrame(capture, signal) {
   const version = capture.documentVersion;
   const url = capture.contents.getURL();
+  await waitForPaint(capture.contents, signal, FRAME_MS);
   const frame = await withBudget(capture.contents.capturePage(frameRect), signal, 350);
   if (capture.documentVersion === version && capture.contents.getURL() === url && !frame.isEmpty()) return frame;
 }
