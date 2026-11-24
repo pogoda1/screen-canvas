@@ -52,7 +52,7 @@ export function validatePatch(schema, previous, edits) {
     }
     const key = path.at(-1);
     field = lookup(field, key);
-    if (!item || typeof item !== 'object' || (Array.isArray(item) && key > item.length) || !field || field.kind === 'unknown' || !(field.binding ?? bound)) {
+    if (!item || typeof item !== 'object' || (Array.isArray(item) && key > item.length) || !field || field.kind === 'unknown' || field.readOnlyReason || !(field.binding ?? bound)) {
       errors.push({ code: 'read-only', path: display, message: 'The field has no editable binding' });
       continue;
     }
@@ -71,7 +71,24 @@ export function validatePatch(schema, previous, edits) {
     else delete item[key];
   }
   if (!errors.length) errors.push(...validateValue(schema, candidate, '$', true));
+  if (!errors.length) validateReadOnly(schema, previous, candidate, '$', errors);
   return errors.length ? { errors } : { value: candidate, errors };
+}
+
+function validateReadOnly(field, previous, next, path, errors) {
+  if (field.readOnlyReason && !isDeepStrictEqual(previous, next)) {
+    errors.push({ code: 'read-only', path, message: field.readOnlyReason });
+    return;
+  }
+  for (const [key, child] of Object.entries(field.fields ?? {})) {
+    validateReadOnly(child, previous?.[key], next?.[key], path + '.' + key, errors);
+  }
+  if (field.items) {
+    const length = Math.max(Array.isArray(previous) ? previous.length : 0, Array.isArray(next) ? next.length : 0);
+    for (let index = 0; index < length; index++) {
+      validateReadOnly(field.items, previous?.[index], next?.[index], path + '[' + index + ']', errors);
+    }
+  }
 }
 
 function lookup(field, key) {

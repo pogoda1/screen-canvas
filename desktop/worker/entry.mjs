@@ -70,23 +70,39 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     return scan();
   }
 
-  async function createScenario(node, { mode, params, data, seed } = {}) {
-    const input = await project.adapter.scenario?.(node, mode) ?? {};
+  const scenarioInput = async (node, mode) => await project.adapter.scenario?.(node, mode) ?? {};
+
+  async function createScenario(node, { mode, params, data, seed, defaults } = {}) {
+    const input = defaults ?? await scenarioInput(node, mode);
     return makeScenario(node, {
       schema: schemas.get(node.id), fixture: { ...input.data, ...data }, params: { ...input.params, ...params },
       seed: input.seed ?? seed, draft: input.draft, mode: input.mode ?? mode, entities: input.entities
     });
   }
 
+  function editSchema(nodeId, defaults) {
+    const schema = schemas.get(nodeId);
+    if (!schema || !defaults.entities?.length) return schema;
+    const copy = structuredClone(schema);
+    for (const entity of defaults.entities) {
+      const field = entity.field.reduce((parent, name) => parent?.fields?.[name], copy);
+      if (field) field.readOnlyReason = 'ID связан с параметром URL и записью API';
+    }
+    return copy;
+  }
+
   async function makeSession({ nodeId, mode, variantId, timeout }) {
     const node = requireNode(nodeId);
     let scenario;
+    let defaults;
     if (variantId) {
       const entry = await variants.read(variantId);
       if (entry.status !== 'ready' || entry.value.scenario.nodeId !== nodeId) throw new Error('Variant cannot open on this screen');
       scenario = entry.value.scenario;
+      defaults = await scenarioInput(node, scenario.mode);
     } else {
-      scenario = await createScenario(node, { mode });
+      defaults = await scenarioInput(node, mode);
+      scenario = await createScenario(node, { mode, defaults });
     }
     const session = await openSession({ project, host, generation, scenario, timeout, bootstrapFile });
     if (disposed) {
@@ -94,9 +110,10 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       throw new Error('Project closed');
     }
     session.saving = new Map();
+    session.schema = editSchema(nodeId, defaults);
     sessions.set(session.id, session);
     return { id: session.id, origin: session.origin, path: scenarioUrl(node, scenario), scenario,
-      schema: schemas.get(nodeId) };
+      schema: session.schema };
   }
 
   async function shutdown() {
@@ -147,9 +164,10 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       const { scenario } = await readCurrent(session);
       if (session.protocol.scenario.nodeId !== scenario.nodeId ||
           JSON.stringify(session.protocol.scenario.params) !== JSON.stringify(scenario.params)) {
+        session.schema = editSchema(scenario.nodeId, await scenarioInput(requireNode(scenario.nodeId), scenario.mode));
         session.protocol.setScenario(scenario);
       }
-      return { id: session.id, nodeId: scenario.nodeId, scenario, schema: schemas.get(scenario.nodeId) };
+      return { id: session.id, nodeId: scenario.nodeId, scenario, schema: session.schema };
     }
     if (operation === 'read') return (await readCurrent(session)).scenario;
     if (operation === 'cancel-save') return session.saving.get(args.requestId)?.abort(new Error('Save cancelled'));
@@ -157,7 +175,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     if (operation === 'loading') return session.setLoading(args.value === true);
     if (operation === 'patch') {
       const current = session.protocol.scenario;
-      const schema = schemas.get(current.nodeId);
+      const schema = session.schema;
       if (!schema) throw new Error('Screen has no editable fields');
       const result = validatePatch(schema, current.data, args.edits);
       if (result.errors.length) return { errors: result.errors };

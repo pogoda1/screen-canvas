@@ -82,7 +82,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
 
   function renderField(schema, path, label, value, inherited) {
     const wrapper = element('div', undefined, 'field');
-    const binding = schema.binding ?? inherited;
+    const binding = schema.readOnlyReason ? undefined : schema.binding ?? inherited;
     const name = element('label', label);
     const title = element('div', undefined, 'field-title');
     title.append(name);
@@ -140,6 +140,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
       }
       name.append(input);
     }
+    if (schema.readOnlyReason) wrapper.append(element('small', schema.readOnlyReason, 'read-only'));
     wrapper.append(message);
     return wrapper;
   }

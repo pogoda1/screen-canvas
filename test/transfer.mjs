@@ -32,6 +32,8 @@ export async function runCatalog(t, project, options = {}, revalidate = false) {
   assert.deepEqual(await guestEval(first.electron,
     "[location.pathname, document.querySelector('[data-product-id]').dataset.productId]"),
     ['/products/field-notes', 'field-notes']);
+  assert.ok(await first.shell.getByRole('textbox', { name: 'id', exact: true }).isDisabled());
+  await first.shell.getByText('ID связан с параметром URL и записью API').waitFor();
   const title = first.shell.getByRole('textbox', { name: 'title', exact: true });
   assert.equal(await title.getAttribute('aria-description'), 'Максимум 24 символов');
   const eyebrow = first.shell.getByRole('textbox', { name: 'eyebrow', exact: true });

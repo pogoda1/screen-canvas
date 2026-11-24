@@ -54,6 +54,7 @@ export interface FieldSchema {
   minItems?: number;
   maxItems?: number;
   binding?: { kind: 'api' | 'props' | 'state'; key: string };
+  readOnlyReason?: string;
   diagnostics?: Diagnostic[];
 }
 export interface ScenarioV1 {

@@ -27,3 +27,18 @@ test('uses a single stable ID and preserves false and zero from fixtures', () =>
   assert.equal(validatePatch(schema, scenario.data, [{ path: ['name'], value: 'Out of bounds' }]).errors[0].path, '$.name');
   assert.equal(scenario.data.name, 'Sample 2');
 });
+
+test('a linked ID is preserved when a bound parent object is patched', () => {
+  const schema = field('object', { fields: {
+    item: field('object', { binding: { kind: 'api', key: 'GET /api/items/:id' }, fields: {
+      id: field('string', { readOnlyReason: 'Uses the route ID' }),
+      name: field('string')
+    } })
+  } });
+  const previous = { item: { id: 'one', name: 'Example' } };
+  const direct = validatePatch(schema, previous, [{ path: ['item', 'id'], value: 'two' }]);
+  assert.equal(direct.errors[0].code, 'read-only');
+  const bypass = validatePatch(schema, previous, [{ path: ['item'], value: { id: 'two', name: 'Changed' } }]);
+  assert.deepEqual(bypass.errors, [{ code: 'read-only', path: '$.item.id', message: 'Uses the route ID' }]);
+  assert.ok(validatePatch(schema, previous, [{ path: ['item', 'name'], value: 'Changed' }]).value);
+});
