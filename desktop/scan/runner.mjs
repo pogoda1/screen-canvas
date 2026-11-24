@@ -1,7 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
 import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
-import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches } from './capture.mjs';
+import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches, refreshScreen } from './capture.mjs';
 import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
 
@@ -149,11 +149,21 @@ export async function crawlGraph(worker, graph, signal, update) {
       const afterNavigation = self && !edge.expectRequests?.length && !differentSnapshot ? startedNavigation : undefined;
       const expect = { expected: edge.target, from: edge.source, timeout, afterNavigation };
       observed = await awaitScreen(capture, graph, jobSignal, { ...expect, waitForNavigation: redirects });
-      ({ records } = await settleRequests(capture, jobSignal));
-      if (!jobSignal.aborted && (observed.url !== capture.contents.getURL() ||
-          observed.navigationVersion !== capture.navigationVersion)) {
-        observed = await awaitScreen(capture, graph, jobSignal, expect);
-      }
+      // Requests can outlast the first ready sample, including on the same URL.
+      // If the document or step changes while settling, observe its requests too.
+      let changed;
+      do {
+        const settled = await settleRequests(capture, jobSignal);
+        records = settled.records;
+        if (jobSignal.aborted) break;
+        const current = await refreshScreen(capture, graph, jobSignal, settled.waited);
+        changed = current.url !== observed.url || current.documentVersion !== observed.documentVersion ||
+          current.navigationVersion !== observed.navigationVersion || current.id !== observed.id ||
+          current.status?.documentId !== observed.status?.documentId;
+        observed = changed && !current.ready && !current.status?.failure ?
+          await awaitScreen(capture, graph, jobSignal, expect) : current;
+      } while (changed && !jobSignal.aborted);
+      if (jobSignal.aborted) observed = { ...observed, ready: false };
       if (edge.expectRequests && !jobSignal.aborted) {
         const failure = await capture.verify(after ?? 0, { expectRequests: edge.expectRequests });
         requestCheck = failure ? 'unverified' : 'verified';
@@ -187,7 +197,11 @@ export async function crawlGraph(worker, graph, signal, update) {
         const relevant = record => !edge.expectRequests?.length ||
           edge.expectRequests.some(expected => record.method === expected.method && record.path === expected.path);
         const actionFailure = requestFailure(afterAction.filter(relevant));
-        const backgroundFailure = requestFailure(afterAction.filter(record => !relevant(record)));
+        const targetReads = moved && !observed?.ready && !redirects ? afterAction.filter(record =>
+          (record.method === 'GET' || record.method === 'HEAD') && !relevant(record) && record.status >= 500) : [];
+        const targetFailure = requestFailure(targetReads);
+        const backgroundFailure = requestFailure(afterAction.filter(record =>
+          !relevant(record) && !targetReads.includes(record)));
         const actionPending = afterAction.some(record => relevant(record) && record.status === 0);
         const backgroundPending = afterAction.some(record => !relevant(record) && record.status === 0);
         if (actionFailure && !moved && !reason) reason = 'The request failed and the screen did not change';
@@ -199,6 +213,7 @@ export async function crawlGraph(worker, graph, signal, update) {
           const pending = redirects && entries.some(request => request.status === 0);
           evidence.targetReady = Boolean(observed?.ready && !failure && !pending);
           if (failure) evidence.targetReason = failure.message;
+          else if (targetFailure) evidence.targetReason = targetFailure.message;
           else if (pending) evidence.targetReason = 'A local request did not finish within the capture budget';
           else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
         }
