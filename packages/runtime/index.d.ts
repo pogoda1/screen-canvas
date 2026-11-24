@@ -104,15 +104,22 @@ export interface MockResponse {
   status?: number;
   body: Json;
 }
+export type ScenarioInput = Partial<ScenarioV1> & {
+  entities?: Array<{ param: string; field: string[]; prefix?: string }>;
+};
 export interface ProjectAdapter {
   tsconfig?: string;
   env?: Record<string, string>;
   browser?: string;
+  openapi?: string;
+  transports?: Array<{ call: string; path: string; method?: string }>;
+  bindings?: Record<string, NonNullable<FieldSchema['binding']>>;
+  configure?(context: { load(specifier: string): Promise<Record<string, unknown>> }): void | Promise<void>;
   apiPrefixes?: string[];
   nodes?: GraphNode[] | (() => GraphNode[] | Promise<GraphNode[]>);
   actions?: ProjectAction[] | (() => ProjectAction[] | Promise<ProjectAction[]>);
   schema?(node: GraphNode): FieldSchema | undefined | Promise<FieldSchema | undefined>;
-  scenario?(node: GraphNode, role?: string): Partial<ScenarioV1> | Promise<Partial<ScenarioV1>>;
+  scenario?(node: GraphNode, role?: string): ScenarioInput | Promise<ScenarioInput>;
   createMocks?(scenario: ScenarioV1): (request: MockRequest) => MockResponse | undefined | Promise<MockResponse | undefined>;
   createHost?: HostDriver['start'];
 }
