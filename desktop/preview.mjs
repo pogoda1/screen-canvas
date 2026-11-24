@@ -58,7 +58,7 @@ export class PreviewController {
     const policy = previewPolicy(session.origin, session.navigationKey);
     const view = new WebContentsView({ webPreferences: policy.preferences });
     policy.attach(view.webContents);
-    this.current = { ...session, nodeId, worker, view, policy, window, sequence };
+    this.current = { ...session, nodeId, worker, view, policy, window, sequence, synchronized: true };
     view.webContents.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
       if (!(event.isMainFrame ?? isMainFrame) || (event.isSameDocument ?? inPlace) ||
           new URL(event.url ?? url).origin !== session.origin) return;
@@ -86,22 +86,26 @@ export class PreviewController {
       }
     }
     if (this.current?.sequence !== sequence) throw new Error('Preview selection was superseded');
-    if (session.reportsIdentity) void this.observeIdentity(preview);
+    void this.observeIdentity(preview);
     return { nodeId, id: session.id, scenario: session.scenario, schema: session.schema };
   }
 
-  follow(preview, url, nodeId) {
+  follow(preview, url, nodeId, retry = false) {
     if (this.current !== preview || !url.startsWith(preview.origin + '/')) return;
     const { pathname } = new URL(url);
-    if (pathname === preview.pathname && (!nodeId || nodeId === preview.reported)) return;
+    const changed = pathname !== preview.pathname || Boolean(nodeId && nodeId !== preview.reported);
+    if (!changed && (!retry || preview.synchronized || preview.navigation)) return;
     preview.pathname = pathname;
-    preview.reported = nodeId;
+    if (changed) preview.reported = nodeId;
+    preview.synchronized = false;
     const navigation = Promise.allSettled([preview.navigation, preview.mutation]).then(async () => {
       if (preview.navigation !== navigation || this.current !== preview) return;
       const description = await preview.worker.call('describe', { id: preview.id });
       if (preview.navigation !== navigation || this.current !== preview) return;
       preview.schema = description.schema;
+      preview.scenario = description.scenario;
       preview.reported ??= description.nodeId;
+      preview.synchronized = true;
       this.description = description;
       this.onNavigate();
     });
@@ -115,8 +119,14 @@ export class PreviewController {
     const contents = preview.view.webContents;
     const url = contents.getURL();
     try {
-      const nodeId = await contents.executeJavaScript('globalThis.__screenCanvasIdentity?.()');
-      if (!contents.isDestroyed() && contents.getURL() === url) this.follow(preview, url, nodeId);
+      const retry = !preview.synchronized && !preview.navigation;
+      if (!retry && !preview.reportsIdentity) return;
+      const observed = await contents.executeJavaScript(retry ? 'globalThis.__screenCanvasStatus?.()' :
+        'globalThis.__screenCanvasIdentity?.()');
+      if (contents.isDestroyed() || contents.getURL() !== url) return;
+      if (retry) {
+        if (observed?.ready) this.follow(preview, url, observed.nodeId, true);
+      } else this.follow(preview, url, observed);
     } catch {
       // The document can disappear while the renderer is reporting its identity.
     } finally {
@@ -130,7 +140,7 @@ export class PreviewController {
     const current = this.current;
     if (!current || current.worker !== worker || current.id !== id) throw new Error('Preview selection expired');
     if (operation === 'patch' || operation === 'save') {
-      this.follow(current, current.view.webContents.getURL());
+      this.follow(current, current.view.webContents.getURL(), undefined, true);
       while (current.navigation) {
         const navigation = current.navigation;
         try { await navigation; }
@@ -139,6 +149,11 @@ export class PreviewController {
         }
       }
       if (current !== this.current) throw new Error('Preview selection expired');
+      const expected = args.screen;
+      if (operation === 'patch' && expected && (expected.nodeId !== current.scenario.nodeId ||
+          JSON.stringify(expected.params) !== JSON.stringify(current.scenario.params))) {
+        throw new Error('The editor screen changed before the edit was applied');
+      }
       const mutation = this.perform(current, operation, args);
       current.mutation = Promise.allSettled([current.mutation, mutation]);
       const barrier = current.mutation;

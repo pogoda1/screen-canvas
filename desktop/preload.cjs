@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('screenCanvas', Object.freeze({
   close: generation => invoke('close', generation),
   open: (generation, nodeId, variantId) => invoke('open', generation, { nodeId, ...(variantId ? { variantId } : {}) }),
   bounds: (generation, rect) => invoke('bounds', generation, rect),
-  patch: (generation, id, edits) => invoke('patch', generation, { id, edits }),
+  patch: (generation, id, edits, screen) => invoke('patch', generation, { id, edits, ...(screen ? { screen } : {}) }),
   read: (generation, id) => invoke('read', generation, { id }),
   requests: (generation, id) => invoke('requests', generation, { id }),
   loading: (generation, id, value) => invoke('loading', generation, { id, value }),

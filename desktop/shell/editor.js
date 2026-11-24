@@ -64,7 +64,8 @@ export function createEditor(root, api, generation, preview, open, variantId) {
 
   async function apply(changes, revision, retryIndependent = true) {
     let result;
-    try { result = await api.patch(generation, preview.id, changes.map(change => change.edit)); }
+    const { nodeId, params } = preview.scenario;
+    try { result = await api.patch(generation, preview.id, changes.map(change => change.edit), { nodeId, params }); }
     catch (error) { result = { errors: [{ path: '$', message: error.message }] }; }
     if (disposed || revision !== screenRevision) return;
     if (!result.errors.length) {
