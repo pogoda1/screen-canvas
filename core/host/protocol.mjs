@@ -24,7 +24,7 @@ export class DocumentProtocol {
   }
 
   invalidate(before = Infinity) {
-    if (this.document && this.document.issued > before) return;
+    if (this.document && this.document.issued >= before) return;
     this.document?.poll?.(null);
     this.document = undefined;
     for (const pending of this.requests.values()) pending(null);

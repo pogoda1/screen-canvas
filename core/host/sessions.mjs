@@ -9,6 +9,7 @@ import { projectPath } from './detect.mjs';
 
 export async function openSession({ project, host, generation, scenario, timeout, bootstrapFile }) {
   const id = randomUUID();
+  const navigationKey = randomUUID();
   const protocol = new DocumentProtocol(generation, id, scenario, timeout);
   const mock = await project.adapter.createMocks?.(scenario);
   const indexFile = await projectPath(project.root, 'index.html');
@@ -82,7 +83,8 @@ export async function openSession({ project, host, generation, scenario, timeout
         return json(response, 500, { error: error.message });
       }
     }
-    if (request.method === 'GET' && request.headers.accept?.includes('text/html')) {
+    if (request.method === 'GET' && request.headers.accept?.includes('text/html') &&
+        request.headers['x-screen-canvas-navigation'] === navigationKey) {
       const page = await host.transformIndexHtml(request.url, await readFile(indexFile, 'utf8'));
       if (response.destroyed || disposed) return;
       const registration = protocol.newDocument();
@@ -98,7 +100,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   }
 
   return {
-    id, origin, protocol, requests, responses, exchanges,
+    id, origin, protocol, requests, responses, navigationKey, exchanges,
     cursor: () => serial,
     setLoading(value) {
       loading = value;

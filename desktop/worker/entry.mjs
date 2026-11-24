@@ -112,7 +112,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     session.saving = new Map();
     session.schema = editSchema(nodeId, defaults);
     sessions.set(session.id, session);
-    return { id: session.id, origin: session.origin, path: scenarioUrl(node, scenario), scenario,
+    return { id: session.id, origin: session.origin, navigationKey: session.navigationKey, path: scenarioUrl(node, scenario), scenario,
       schema: session.schema };
   }
 

@@ -10,7 +10,7 @@ export async function createCapture(worker, nodeId, role, signal) {
     await worker.call('close', { id: preview.id }).catch(() => {});
     signal.throwIfAborted();
   }
-  const policy = previewPolicy(preview.origin);
+  const policy = previewPolicy(preview.origin, preview.navigationKey);
   const window = new BrowserWindow({ width: 390, height: 844, useContentSize: true, show: false,
     webPreferences: { ...policy.preferences, offscreen: true, paintWhenInitiallyHidden: true } });
   const { webContents: contents } = window;

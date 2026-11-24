@@ -54,12 +54,13 @@ export class PreviewController {
       throw new Error('Preview selection was superseded');
     }
 
-    const policy = previewPolicy(session.origin);
+    const policy = previewPolicy(session.origin, session.navigationKey);
     const view = new WebContentsView({ webPreferences: policy.preferences });
     policy.attach(view.webContents);
     this.current = { ...session, nodeId, worker, view, policy, window, sequence };
     view.webContents.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-      if (!(event.isMainFrame ?? isMainFrame) || (event.isSameDocument ?? inPlace)) return;
+      if (!(event.isMainFrame ?? isMainFrame) || (event.isSameDocument ?? inPlace) ||
+          new URL(event.url ?? url).origin !== session.origin) return;
       void worker.call('invalidate', { id: session.id, before: Date.now() }).catch(() => {});
     });
     const preview = this.current;

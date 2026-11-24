@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { session } from 'electron';
 
-export function previewPolicy(origin) {
+export function previewPolicy(origin, navigationKey) {
   const partition = 'screen-canvas-' + randomUUID();
   const isolate = session.fromPartition(partition, { cache: false });
   const isLocal = url => {
@@ -12,6 +12,16 @@ export function previewPolicy(origin) {
     cancel: !isLocal(details.url) && !(details.resourceType !== 'mainFrame' &&
       details.resourceType !== 'subFrame' && /^(?:data:|blob:)/.test(details.url))
   }));
+  isolate.webRequest.onBeforeSendHeaders((details, callback) => {
+    const headers = details.requestHeaders;
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === 'x-screen-canvas-navigation') delete headers[key];
+    }
+    if (details.resourceType === 'mainFrame' && isLocal(details.url)) {
+      headers['X-Screen-Canvas-Navigation'] = navigationKey;
+    }
+    callback({ requestHeaders: headers });
+  });
   isolate.setPermissionCheckHandler(() => false);
   isolate.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   isolate.setDevicePermissionHandler(() => false);
@@ -25,6 +35,7 @@ export function previewPolicy(origin) {
     attach(contents) {
       contents.once('destroyed', () => {
         isolate.webRequest.onBeforeRequest(null);
+        isolate.webRequest.onBeforeSendHeaders(null);
         isolate.setPermissionCheckHandler(null);
         isolate.setPermissionRequestHandler(null);
         isolate.setDevicePermissionHandler(null);

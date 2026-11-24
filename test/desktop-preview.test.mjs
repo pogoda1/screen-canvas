@@ -5,6 +5,7 @@ import { makeHost } from './helpers/host-fixture.mjs';
 
 test('a real isolated preview submits a form and saves the latest fetch-bound reload', { timeout: 45000 }, async t => {
   const folder = await makeHost(t, {
+    'nested.html': '<!doctype html><html><head><title>Nested</title></head><body><h1>Nested frame</h1></body></html>',
     'screen-canvas.config.mjs': `export default {
       browser: '/src/bindings.js',
       schema: node => node.path === '/' ? {
@@ -79,6 +80,20 @@ test('a real isolated preview submits a form and saves the latest fetch-bound re
     const preview = await screenCanvas.open(state.generation, 'route:/');
     return { generation: state.generation, id: preview.id };
   });
+  await guestEval(electron, `Promise.all([
+    fetch('/nested.html', {headers:{accept:'text/html'}}).then(response => response.text()),
+    new Promise(resolve => {
+      const frame = document.createElement('iframe');
+      frame.src = '/nested.html';
+      frame.addEventListener('load', resolve, {once:true});
+      document.body.append(frame);
+    })
+  ]).then(([text]) => {
+    if (text.includes('__screenCanvasBoot=')) throw new Error('HTML fetch received the main document binding');
+  })`);
+  const nested = await shell.evaluate(({ generation, id }) => screenCanvas.save(generation, id, 'Main document unchanged'), open);
+  assert.equal(nested.scenario.nodeId, 'route:/');
+  assert.equal(nested.scenario.data['GET /api/profile'].name, 'First');
   const value = await shell.evaluate(async ({ generation, id }) => {
     const edited = await screenCanvas.patch(generation, id, [{ path: ['GET /api/profile', 'name'], value: 'Latest' }]);
     const saved = await screenCanvas.save(generation, id, 'Latest state');

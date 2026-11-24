@@ -53,7 +53,7 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
   assert.equal((await fetch(b.origin + '/api/unknown')).status, 501);
 
   async function document() {
-    const page = await (await fetch(a.origin, { headers: { accept: 'text/html' } })).text();
+    const page = await (await fetch(a.origin, { headers: { accept: 'text/html', 'x-screen-canvas-navigation': a.navigationKey } })).text();
     const { stamp, token, initial } = JSON.parse(/__screenCanvasBoot=(.*?);\(\(\)/s.exec(page)[1]);
     const send = (type, extra) => fetch(a.origin + '/__screen_canvas/session', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-screen-canvas-document': token },
@@ -68,6 +68,8 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
   }
   const oldPage = await document();
   await ready(oldPage);
+  const unrelated = await (await fetch(a.origin + '/fragment', { headers: { accept: 'text/html' } })).text();
+  assert.ok(!unrelated.includes('__screenCanvasBoot='));
   const original = invoke('save', { id: a.id, name: 'Original' });
   const originalRead = await (await oldPage.send('poll')).json();
   await oldPage.send('snapshot', { requestId: originalRead.requestId, scenario: oldPage.initial });
