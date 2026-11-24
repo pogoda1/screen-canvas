@@ -20,11 +20,9 @@
     body: JSON.stringify({ ...stamp, revision, type, ...payload })
   });
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const visible = element => element.getClientRects().length > 0 && !element.closest('[hidden],[aria-hidden="true"]');
-  const content = () => Array.from(document.body?.querySelectorAll('h1,h2,p,button,a,input,img,canvas,video,div,span') ?? [])
-    .filter(element => visible(element) && (element.matches('input,img,canvas,video') ||
-      (!element.children.length && element.textContent.trim())));
-  const domReady = () => content().length > 0;
+  const visible = element => element.getClientRects().length > 0 &&
+    !element.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(element).visibility === 'visible';
+  const loadingLabel = text => /^(?:loading|please wait)[\s.…]*$/i.test(text.trim());
   let renderError;
   addEventListener('error', event => {
     if (event instanceof ErrorEvent) renderError = { path: location.pathname, message: event.message || 'Uncaught renderer error' };
@@ -33,19 +31,46 @@
     renderError = { path: location.pathname, message: event.reason?.message || 'Unhandled renderer rejection' };
   });
 
-  function mounted(hint) {
-    if (hint?.tag && /^[a-z][a-z0-9-]*$/.test(hint.tag)) {
-      return Array.from(document.querySelectorAll(hint.tag)).some(element =>
-        visible(element) && element.textContent.replace(/\s+/g, ' ').trim() === hint.text);
+  function belongsToIndex(element) {
+    const key = Object.keys(element).find(property => property.startsWith('__reactFiber$'));
+    for (let fiber = element[key]; fiber; fiber = fiber.return) {
+      // React Router's nearest route provider describes the branch rendering this element.
+      const context = fiber.memoizedProps?.value;
+      if (Array.isArray(context?.matches) && typeof context.isDataRoute === 'boolean' &&
+          Object.hasOwn(context, 'outlet')) return context.matches.at(-1)?.route?.index === true;
     }
-    if (!hint?.component) return false;
-    return content().some(element => {
-      const key = Object.keys(element).find(property => property.startsWith('__reactFiber$'));
-      for (let fiber = element[key]; fiber; fiber = fiber.return) {
-        if (fiber.type?.name === hint.component || fiber.type?.displayName === hint.component) return true;
-      }
-      return false;
-    });
+    return false;
+  }
+
+  function inspectContent(index) {
+    const body = document.body;
+    if (!body) return { content: false, loading: false, mounted: false };
+    const busy = body.querySelectorAll('[data-screen-canvas-loading],[aria-busy="true"]');
+    const statuses = body.querySelectorAll('[role="status"],[role="progressbar"]');
+    let loading = [...busy].some(visible) || [...statuses].some(element =>
+      visible(element) && loadingLabel(element.getAttribute('aria-label') ?? element.textContent));
+    let content = false;
+    let mounted = false;
+    const observe = element => {
+      content = true;
+      if (index && !mounted) mounted = belongsToIndex(element);
+    };
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      const owner = text.parentElement;
+      if (!text.textContent.trim() || owner.closest('script,style,noscript,template,[hidden],[aria-hidden="true"]') ||
+          getComputedStyle(owner).visibility !== 'visible') continue;
+      range.selectNodeContents(text);
+      if (!range.getClientRects().length) continue;
+      if (loadingLabel(text.textContent) && loadingLabel(owner.textContent)) loading = true;
+      else observe(owner);
+    }
+    for (const element of body.querySelectorAll('input:not([type="hidden"]),textarea,select,img,svg,canvas,video')) {
+      if (visible(element)) observe(element);
+    }
+    return { content, loading, mounted };
   }
   const hook = async (name, input) => {
     let result = input;
@@ -55,13 +80,13 @@
     return result;
   };
 
-  async function status(hint) {
+  async function status(index) {
     const error = document.querySelector('[data-screen-canvas-error],vite-error-overlay');
     const failure = error?.textContent.trim().slice(0, 240) || (error && 'The application rendered an error screen') || (renderError?.path === location.pathname ? renderError.message : undefined);
-    const loading = Boolean(document.querySelector('[data-screen-canvas-loading]'));
-    const ready = !failure && !loading && Boolean(await hook('ready', domReady()));
+    const { content, loading, mounted } = inspectContent(index);
+    const ready = !failure && !loading && Boolean(await hook('ready', content));
     return { ready, ...(failure ? { failure } : {}), loading, nodeId: await hook('identify'),
-      mounted: Boolean(ready && mounted(hint)), applied: revision };
+      mounted: Boolean(ready && mounted), applied: revision };
   }
   Object.defineProperty(globalThis, '__screenCanvasStatus', { value: status });
   if (browser) Object.defineProperty(globalThis, '__screenCanvasIdentity', {

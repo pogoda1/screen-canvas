@@ -57,10 +57,9 @@ export async function awaitScreen(capture, graph, signal, { expected, timeout = 
     const pathname = url ? new URL(url).pathname : '/';
     const possibleId = identifyNode(graph, pathname);
     const candidate = graph.nodes.find(node => node.id === possibleId);
-    const hint = candidate?.index ? candidate.mount : null;
     try {
       status = await Promise.race([
-        capture.contents.executeJavaScript('globalThis.__screenCanvasStatus?.(' + JSON.stringify(hint ?? null) + ')'),
+        capture.contents.executeJavaScript('globalThis.__screenCanvasStatus?.(' + Boolean(candidate?.index) + ')'),
         setTimeout(300, undefined, { signal })
       ]);
     }

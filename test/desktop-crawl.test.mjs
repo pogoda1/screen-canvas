@@ -36,6 +36,11 @@ test('Chromium captures node content and proves distinct observed actions', { ti
             .then(() => navigate('/next'))}>Answer</button></main>;
       }
       function Broken() { throw new Error('Broken route render'); }
+      function Deferred() {
+        const [pending, setPending] = React.useState(true);
+        React.useEffect(() => { const timer = setTimeout(() => setPending(false), 380); return () => clearTimeout(timer); }, []);
+        return pending ? <main aria-busy="true">Loading…</main> : <main>Deferred content</main>;
+      }
       class Boundary extends React.Component {
         static getDerivedStateFromError() { return { error: true }; }
         render() { return this.state?.error ? <h1 data-screen-canvas-error>Route failed</h1> : this.props.children; }
@@ -44,14 +49,18 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         <Route path="/" element={<Home/>}/>
         <Route path="/broken" element={<Boundary><Broken /></Boundary>}/>
         <Route path="/loading" element={<div data-screen-canvas-loading><h1>Loading</h1></div>}/>
-        <Route path="/empty" element={<main><h1>Only layout</h1></main>}>
-          <Route index element={<p>Index child without an outlet</p>}/>
+        <Route path="/text-loading" element={<p>Loading…</p>}/>
+        <Route path="/busy" element={<main aria-busy="true">Getting the screen ready</main>}/>
+        <Route path="/deferred" element={<Deferred/>}/>
+        <Route path="/about" element={<main>About</main>}/>
+        <Route path="/empty" element={<main><h1>Product</h1></main>}>
+          <Route index element={<main><h1>Product</h1></main>}/>
         </Route>
         <Route path="/legal/:document" element={<h1>Legal document</h1>}/>
         <Route path="/privacy" element={<Navigate to="/legal/privacy" replace/>}/>
         <Route path="/old" element={<Navigate to="/next" replace/>}/>
         <Route path="/next" element={<><h1>Layout</h1><Outlet/></>}>
-          <Route index element={<p>Index content</p>}/>
+          <Route index element={<main><h1>Product</h1></main>}/>
         </Route>
       </Routes></BrowserRouter>);
     `
@@ -72,10 +81,17 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   const layout = graph.nodes.find(node => node.id === 'route:/next');
   assert.ok(index.screenshot?.startsWith('data:image/png;base64,iVBOR'));
   assert.ok(index.screenshot.length > 3000);
+  for (const id of ['route:/about', 'route:/deferred']) {
+    const node = graph.nodes.find(item => item.id === id);
+    assert.ok(node.screenshot?.startsWith('data:image/png;base64,iVBOR'), id);
+    assert.deepEqual(node.diagnostics, [], id);
+  }
   assert.equal(layout.screenshot, undefined);
   assert.equal(layout.diagnostics.at(-1).code, 'different-screen');
   for (const [id, diagnostic] of [
-    ['route:/broken', 'render-error'], ['route:/loading', 'loading-timeout'], ['route:/empty#index', 'index-unmounted']
+    ['route:/broken', 'render-error'], ['route:/loading', 'loading-timeout'],
+    ['route:/text-loading', 'loading-timeout'], ['route:/busy', 'loading-timeout'],
+    ['route:/empty#index', 'index-unmounted']
   ]) {
     const node = graph.nodes.find(item => item.id === id);
     assert.equal(node.screenshot, undefined, id);

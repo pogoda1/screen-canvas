@@ -75,12 +75,6 @@ export function discoverRoutes(ts, root, sources) {
       const element = value(ts, attr(ts, syntax, 'element')?.initializer);
       if (element && (opening(ts, element) || ts.isJsxElement(element))) {
         node.component = (element.openingElement ?? element).tagName.getText();
-        if (index && /^[A-Z][\w]*$/.test(node.component)) node.mount = { component: node.component };
-        if (index && ts.isJsxElement(element) && /^[a-z][a-z0-9-]*$/.test(node.component)) {
-          const text = element.children.filter(ts.isJsxText).map(child => child.getText())
-            .join(' ').replace(/\s+/g, ' ').trim();
-          if (text) node.mount = { tag: node.component, text };
-        }
       }
       routeElements.set(syntax, node);
       records.push({ node, element });
