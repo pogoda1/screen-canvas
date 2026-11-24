@@ -89,13 +89,19 @@
     return result;
   };
 
-  async function status(index) {
+  async function status(index, forCapture = false) {
     const error = document.querySelector('[data-screen-canvas-error],vite-error-overlay');
     const failure = error?.textContent.trim().slice(0, 240) || (error && 'The application rendered an error screen') || (renderError?.path === location.pathname ? renderError.message : undefined);
     const { content, loading, mounted } = inspectContent(index);
     const ready = !failure && !loading && Boolean(await hook('ready', content));
-    return { ready, ...(failure ? { failure } : {}), loading, nodeId: await hook('identify'),
-      mounted: Boolean(ready && mounted), applied: revision };
+    const nodeId = await hook('identify');
+    const observed = { ready, ...(failure ? { failure } : {}), loading, nodeId,
+      mounted: Boolean(ready && mounted), applied: revision, documentId: stamp.documentId };
+    if (forCapture && ready) {
+      try { observed.captureReady = Boolean(await hook('captureReady', true)); }
+      catch { observed.captureError = true; }
+    }
+    return observed;
   }
   Object.defineProperty(globalThis, '__screenCanvasStatus', { value: status });
   if (browser) Object.defineProperty(globalThis, '__screenCanvasIdentity', {

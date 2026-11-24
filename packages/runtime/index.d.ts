@@ -80,6 +80,8 @@ export type SessionCommand = SessionStamp & (
 );
 export interface BrowserBindings {
   ready?(): boolean | Promise<boolean>;
+  /** Additional readiness for static captures only. Live read/apply still uses ready. */
+  captureReady?(): boolean | Promise<boolean>;
   identify?(): string | undefined;
   apply?(scenario: ScenarioV1): void | Promise<void>;
   read?(scenario: ScenarioV1): ScenarioV1 | Promise<ScenarioV1>;

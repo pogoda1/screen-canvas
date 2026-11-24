@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { launchCanvas, pick } from './helpers/electron.mjs';
+import { launchCanvas, pick, waitGuest } from './helpers/electron.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
 test('Chromium captures node content and proves distinct observed actions', { timeout: 45000 }, async t => {
@@ -103,7 +103,9 @@ test('Chromium captures node content and proves distinct observed actions', { ti
     if (state.progress?.total && state.progress.total === state.progress.completed) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(state.progress?.completed, state.progress?.total);
+  assert.equal(state.progress?.completed, state.progress?.total, JSON.stringify(
+    state.graph?.nodes.map(({ id, diagnostics, screenshot }) => [id, diagnostics, !!screenshot])
+  ));
   const { graph } = state;
   const index = graph.nodes.find(node => node.id === 'route:/next#index');
   const layout = graph.nodes.find(node => node.id === 'route:/next');
@@ -151,4 +153,116 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(wrongDoc.actualPath, '/legal/privacy');
   assert.equal(wrongDoc.expectedPath, '/legal/offer');
   assert.match(graph.edges.find(edge => edge.id === 'never').evidence.reason, /unavailable/);
+});
+
+test('capture waits for painted content in the current document without gating live readiness', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      browser: '/src/bindings.js',
+      nodes: ['first', 'second'].map(step => ({
+        id: 'route:/steps#' + step, path: '/steps', state: step, label: step
+      }))
+    };`,
+    'src/bindings.js': `
+      import { registerBrowserBindings } from 'react-screen-canvas/browser';
+      registerBrowserBindings({
+        ready: () => Boolean(document.querySelector('h1')),
+        identify: () => document.querySelector('[data-step]')?.dataset.step,
+        captureReady: () => {
+          if (location.pathname === '/indeterminate') return new Promise(() => {});
+          return !document.querySelector('[data-cover]') && location.pathname !== '/live';
+        }
+      });
+    `,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route} from 'react-router-dom';
+      import { getInitialScenario } from 'react-screen-canvas/browser';
+      function Covered() {
+        const [covered, setCovered] = React.useState(true);
+        React.useEffect(() => {
+          const timer = setTimeout(() => requestAnimationFrame(() => setCovered(false)), 550);
+          return () => clearTimeout(timer);
+        }, []);
+        return <main style={{background:'#12b456',position:'fixed',inset:0}}>
+          <h1>Covered screen</h1>
+          {covered && <div data-cover style={{background:'#ba2040',position:'fixed',inset:0}}>Starting</div>}
+        </main>;
+      }
+      function Reload() {
+        const second = sessionStorage.getItem('reloaded');
+        return <main style={{background:second ? '#12b456' : '#ba2040',position:'fixed',inset:0}}>
+          <h1>{second ? 'Current document' : 'Original document'}</h1>
+        </main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/covered" element={<Covered/>}/>
+        <Route path="/reload" element={<Reload/>}/>
+        <Route path="/steps" element={<main data-step={getInitialScenario()?.nodeId}><h1>Step</h1></main>}/>
+        <Route path="/live" element={<main><h1>Live form</h1><input aria-label="Name"/></main>}/>
+        <Route path="/indeterminate" element={<h1>Unsettled capture hook</h1>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  // Interleave a real reload with a real Chromium capture at the same pathname.
+  await electron.evaluate(({ app }) => {
+    app.on('browser-window-created', (_event, window) => {
+      const contents = window.webContents;
+      if (!contents.isOffscreen()) return;
+      const capturePage = contents.capturePage.bind(contents);
+      let reloaded = false;
+      contents.capturePage = async (...args) => {
+        const image = await capturePage(...args);
+        if (!reloaded && new URL(contents.getURL()).pathname === '/reload') {
+          reloaded = true;
+          await contents.executeJavaScript("sessionStorage.setItem('reloaded', '1')");
+          contents.reloadIgnoringCache();
+        }
+        if (new URL(contents.getURL()).pathname === '/steps') {
+          await contents.executeJavaScript(
+            "document.querySelector('[data-step]').dataset.step = 'route:/steps#second'"
+          );
+        }
+        return image;
+      };
+    });
+  });
+  const start = performance.now();
+  await pick(electron, shell, folder);
+  await shell.getByRole('button', { name: '/live', exact: true }).click();
+  assert.equal(await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Live form'"), true);
+  const live = await waitGuest(electron, "globalThis.__screenCanvasStatus?.().then(status => status.ready)");
+  assert.equal(live, true);
+  let state;
+  // Seven nodes, two scan slots. The 4 s UI phase bounds a stalled hook.
+  // 20 s leaves room for the remaining waves and cold Vite/Electron startup.
+  while (performance.now() - start < 20_000) {
+    state = await shell.evaluate(() => screenCanvas.state());
+    if (state.status === 'error') throw new Error(state.error);
+    if (state.progress?.total && state.progress.total === state.progress.completed) break;
+    await new Promise(resolve => setTimeout(resolve, 60));
+  }
+  t.diagnostic('Chromium scan elapsed ' + Math.round(performance.now() - start) + ' ms');
+  assert.ok(state.progress?.total);
+  assert.equal(state.progress.completed, state.progress.total);
+  const byId = id => state.graph.nodes.find(node => node.id === 'route:' + id);
+  for (const id of ['/covered', '/reload']) {
+    const { screenshot, diagnostics } = byId(id);
+    assert.deepEqual(diagnostics, [], id);
+    assert.ok(screenshot, id);
+    const pixel = await electron.evaluate(({ nativeImage }, source) => {
+      const image = nativeImage.createFromDataURL(source);
+      const bitmap = image.toBitmap();
+      return [...bitmap.subarray(0, 4)];
+    }, screenshot);
+    assert.equal(pixel[1], 180, id + ' shows the unobstructed green frame: ' + pixel);
+  }
+  assert.equal(byId('/live').screenshot, undefined);
+  assert.equal(byId('/live').diagnostics.at(-1).code, 'capture-not-ready');
+  assert.equal(byId('/indeterminate').screenshot, undefined);
+  assert.equal(byId('/steps#first').screenshot, undefined);
+  assert.equal(byId('/steps#first').diagnostics.at(-1).code, 'different-screen');
+  assert.ok(byId('/steps#second').screenshot);
 });

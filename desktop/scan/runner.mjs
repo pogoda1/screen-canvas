@@ -1,6 +1,6 @@
 import { routeMatches } from '../../core/discovery/actions.mjs';
 import { edgeEvidence } from '../../core/graph-evidence.mjs';
-import { awaitScreen, createCapture, snapshot } from './capture.mjs';
+import { awaitScreen, CAPTURE_JOB_MS, createCapture, captureScreen } from './capture.mjs';
 import { runAction } from './actions.mjs';
 
 export async function crawlGraph(worker, graph, signal, update) {
@@ -23,8 +23,10 @@ export async function crawlGraph(worker, graph, signal, update) {
   async function captureNode(node) {
     let capture;
     try {
-      capture = await createCapture(worker, node.id, node.role, signal);
-      const observed = await awaitScreen(capture, graph, signal, { expected: node.id });
+      const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(CAPTURE_JOB_MS)]);
+      capture = await createCapture(worker, node.id, node.role, jobSignal);
+      const { observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id);
+      signal.throwIfAborted();
       node.requests = await capture.requests();
       const failure = node.requests.find(request => request.status >= 500);
       if (failure) {
@@ -32,10 +34,10 @@ export async function crawlGraph(worker, graph, signal, update) {
       }
       if (observed.diagnostic) node.diagnostics.push(observed.diagnostic);
       else if (observed.id !== node.id || !observed.ready) {
-        const reason = failure ? 'A required mock failed' : observed.id ? 'Rendered ' + observed.id :
+        const reason = failure ? 'A required mock failed' : observed.id && observed.id !== node.id ? 'Rendered ' + observed.id :
           capture.errors.length ? capture.errors.at(-1) : 'No matching content became ready';
-        node.diagnostics.push({ code: observed.id ? 'different-screen' : 'not-ready', message: reason });
-      } else if (!failure) node.screenshot = await snapshot(capture, signal);
+        node.diagnostics.push({ code: observed.id && observed.id !== node.id ? 'different-screen' : 'not-ready', message: reason });
+      } else if (!failure) node.screenshot = screenshot;
     } catch (error) {
       if (!signal.aborted) node.diagnostics.push({ code: 'capture', message: error.message });
     } finally { await capture?.close(); }
