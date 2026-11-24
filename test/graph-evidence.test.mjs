@@ -19,7 +19,7 @@ function record(expected, observation, requests = [], consoleCodes = []) {
 test('capture transitions require the declared mode, concrete path and node', () => {
   assert.equal(captureExpectation(graph, source, 'complete', '/entry'), complete);
   assert.equal(captureExpectation(graph, source, 'guest', '/entry'), guest);
-  assert.deepEqual(captureExpectation(graph, source, 'new', '/entry'), { target: source.id, path: '/entry' });
+  assert.deepEqual(captureExpectation(graph, source, 'new', '/entry'), { target: source.id, path: '/entry', inferRedirect: true });
   assert.equal(record(complete, observed(complete.target, complete.path)).transition, 'verified');
   for (const [expected, found] of [
     [complete, observed(complete.target, '/detail/substituted')],

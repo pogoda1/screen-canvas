@@ -397,6 +397,12 @@ test('Chromium reports expected destinations and request failures independently'
 
 test('a guarded automatic route keeps a member frame without confirming coincident branches', { timeout: 35_000 }, async t => {
   const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      scenario: () => ({ mode:'member' }),
+      captureRules: [
+        { source:'route:/account', role:'member', target:'route:/account', path:'/account' }
+      ],
+    };`,
     'src/main.jsx': `
       import React from 'react';
       import {createRoot} from 'react-dom/client';
@@ -404,6 +410,10 @@ test('a guarded automatic route keeps a member frame without confirming coincide
       function Member() {
         const member = location.pathname === '/member';
         if (member) return <main><h1>Private member content</h1></main>;
+        return <Navigate to="/signin" replace/>;
+      }
+      function Account() {
+        if (location.hash === '#authorized') return <h1>Account</h1>;
         return <Navigate to="/signin" replace/>;
       }
       function Guest() {
@@ -414,6 +424,7 @@ test('a guarded automatic route keeps a member frame without confirming coincide
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
         <Route path="/member" element={<Member/>}/>
         <Route path="/guest" element={<Guest/>}/>
+        <Route path="/account" element={<Account/>}/>
         <Route path="/signin" element={<h1>Sign-in form</h1>}/>
       </Routes></BrowserRouter>);
     `
@@ -425,6 +436,12 @@ test('a guarded automatic route keeps a member frame without confirming coincide
   assert.equal(member.capture.outcome, 'captured');
   assert.equal(member.capture.actualPath, '/member');
   assert.ok(member.screenshot?.startsWith('data:image/png;base64,'));
+  const account = graph.nodes.find(node => node.path === '/account');
+  assert.equal(account.capture.outcome, 'different-screen');
+  assert.equal(account.capture.transition, 'unexpected');
+  assert.equal(account.capture.expectedPath, '/account');
+  assert.equal(account.capture.actualPath, '/signin');
+  assert.equal(account.screenshot, undefined);
   const guest = graph.nodes.find(node => node.path === '/guest');
   assert.equal(guest.capture.outcome, 'transition');
   assert.equal(guest.capture.actualPath, '/signin');

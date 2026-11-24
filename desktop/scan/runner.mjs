@@ -55,7 +55,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
       } else {
         ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
-        const redirect = observedRedirect(graph, node, observed);
+        const redirect = expected.inferRedirect && observedRedirect(graph, node, observed);
         if (redirect) expected = { ...redirect, sourcePath: capture.initialPath };
       }
     } catch {

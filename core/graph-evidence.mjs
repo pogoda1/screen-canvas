@@ -39,7 +39,7 @@ export function captureExpectation(graph, node, mode, initialPath) {
   if (redirects.length === 1) {
     return { target: redirects[0].target, path: redirects[0].expectedPath };
   }
-  return { target: node.id, path: initialPath };
+  return { target: node.id, path: initialPath, inferRedirect: true };
 }
 
 export function observedRedirect(graph, node, observed) {
