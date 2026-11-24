@@ -23,6 +23,13 @@ export function previewPolicy(origin) {
       webSecurity: true, backgroundThrottling: false
     },
     attach(contents) {
+      contents.once('destroyed', () => {
+        isolate.webRequest.onBeforeRequest(null);
+        isolate.setPermissionCheckHandler(null);
+        isolate.setPermissionRequestHandler(null);
+        isolate.setDevicePermissionHandler(null);
+        isolate.removeListener('will-download', denyDownload);
+      });
       contents.setWindowOpenHandler(() => ({ action: 'deny' }));
       for (const event of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
         contents.on(event, (navigation, url) => {

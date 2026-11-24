@@ -47,6 +47,7 @@ export async function startVite(project) {
     return {
       transformIndexHtml: host.transformIndexHtml.bind(host),
       middleware: host.middlewares ?? host.middleware,
+      invalidate: () => host.moduleGraph?.invalidateAll(),
       async close() {
         try { await host.close(); }
         finally {

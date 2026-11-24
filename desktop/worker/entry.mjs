@@ -121,7 +121,10 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     await starting;
     if (disposed) throw new Error('Project closed');
     if (operation === 'graph') return graph;
-    if (operation === 'scan') return scan();
+    if (operation === 'scan') {
+      host.invalidate();
+      return scan();
+    }
     if (operation === 'variants') return variants.list();
     if (operation === 'open') {
       if (sessions.size + openings >= 3) throw new Error('Preview limit reached');
