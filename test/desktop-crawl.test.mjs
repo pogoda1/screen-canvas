@@ -566,15 +566,30 @@ test('rebuild keeps a declared redirect card selected once its new evidence arri
 test('a delayed successful response cannot publish a frame from the old document or route', { timeout: 35_000 }, async t => {
   const folder = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
+      browser: '/src/step-bindings.js',
+      nodes: ['first','second'].map(state => ({ id:'route:/steps#' + state, path:'/steps', state, label:state })),
       createMocks: () => async () => {
         await new Promise(resolve => setTimeout(resolve, 650));
         return {status:200,body:{}};
       }
     };`,
+    'src/step-bindings.js': `
+      import {registerBrowserBindings} from 'react-screen-canvas/browser';
+      registerBrowserBindings({identify:() => document.querySelector('[data-step]')?.dataset.step});
+    `,
     'src/main.jsx': `
       import React from 'react';
       import {createRoot} from 'react-dom/client';
       import {BrowserRouter, Routes, Route, useNavigate} from 'react-router-dom';
+      import {getInitialScenario} from 'react-screen-canvas/browser';
+      function Steps() {
+        const [id, setId] = React.useState(getInitialScenario()?.nodeId);
+        React.useEffect(() => {
+          if (id !== 'route:/steps#first') return;
+          void fetch('/api/complete').then(() => setId('route:/steps#second'));
+        },[id]);
+        return <main data-step={id}><h1>Active step</h1></main>;
+      }
       function Early({ reload }) {
         const go = useNavigate();
         const done = sessionStorage.getItem('new-document');
@@ -596,6 +611,7 @@ test('a delayed successful response cannot publish a frame from the old document
         <Route path="/navigate" element={<Early reload={false}/>}/>
         <Route path="/reload-after-http" element={<Early reload/>}/>
         <Route path="/after" element={<h1>New route</h1>}/>
+        <Route path="/steps" element={<Steps/>}/>
       </Routes></BrowserRouter>);
     `
   });
@@ -612,4 +628,9 @@ test('a delayed successful response cannot publish a frame from the old document
   const green = await electron.evaluate(({ nativeImage }, url) =>
     nativeImage.createFromDataURL(url).toBitmap()[1], reloaded.screenshot);
   assert.equal(green, 180, 'The retained pixels came from the post-response document');
+  const first = graph.nodes.find(node => node.id === 'route:/steps#first');
+  assert.equal(first.capture.actualPath, '/steps');
+  assert.equal(first.capture.actualNode, 'route:/steps#second');
+  assert.equal(first.screenshot, undefined);
+  assert.ok(graph.nodes.find(node => node.id === 'route:/steps#second').screenshot);
 });
