@@ -1,8 +1,9 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, readdir, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { setTimeout } from 'node:timers/promises';
 import { assertScenario } from './contracts.mjs';
 import { validateValue } from './data/validate.mjs';
 
@@ -79,8 +80,7 @@ export async function createVariantStore(root, getSchema) {
     const label = cleanName(name);
     if (id !== undefined && !pattern.test(id)) throw new VariantError('id', 'Invalid variant ID');
     const dir = await directory(true);
-    const lockPath = path.join(dir, '.write-lock');
-    const lock = await acquire(lockPath);
+    const lock = await acquire(dir);
     let temporary;
     try {
       const schema = await getSchema(assertScenario(scenario).nodeId);
@@ -118,7 +118,6 @@ export async function createVariantStore(root, getSchema) {
     } finally {
       if (temporary) await unlink(temporary).catch(() => {});
       await lock.close();
-      await unlink(lockPath);
     }
   }
 
@@ -156,13 +155,20 @@ function rejectPrivateFields(data) {
   }
 }
 
-async function acquire(lockPath) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try { return await open(lockPath, 'wx', 0o600); }
-    catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      await setTimeout(20);
-    }
+async function acquire(directory) {
+  // The directory descriptor remains open in this process after lockf exits.
+  // macOS releases the advisory lock when the final descriptor closes, including on SIGKILL.
+  const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try {
+    const lockf = spawn('/usr/bin/lockf', ['-s', '-t', '2', '3'], {
+      stdio: ['ignore', 'ignore', 'ignore', handle.fd]
+    });
+    const [status] = await once(lockf, 'exit');
+    if (status === 75) throw new VariantError('busy', 'Could not acquire the scenario write lock');
+    if (status !== 0) throw new VariantError('lock', 'Could not protect the scenario directory');
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
-  throw new VariantError('busy', 'Could not acquire the scenario write lock');
 }
