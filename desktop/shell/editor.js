@@ -29,10 +29,10 @@ export function createEditor(root, api, generation, preview, open, variantId) {
   root.replaceChildren(heading, fields, status, hold, variants.node);
   render();
 
-  function queue(path, value, remove, structural = false) {
+  function queue(path, value, remove, { redraw = false, notice = path } = {}) {
     const edit = remove ? { path, remove: true } : { path, value };
-    queued.set(JSON.stringify(path), edit);
-    dirtyStructure ||= structural;
+    queued.set(JSON.stringify(path), { edit, notice: displayPath(notice) });
+    dirtyStructure ||= redraw;
     clearTimeout(timer);
     timer = setTimeout(() => void flush(), 115);
   }
@@ -62,14 +62,14 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     }
   }
 
-  async function apply(edits, revision, retryIndependent = true) {
+  async function apply(changes, revision, retryIndependent = true) {
     let result;
-    try { result = await api.patch(generation, preview.id, edits); }
+    try { result = await api.patch(generation, preview.id, changes.map(change => change.edit)); }
     catch (error) { result = { errors: [{ path: '$', message: error.message }] }; }
     if (disposed || revision !== screenRevision) return;
     if (!result.errors.length) {
       data = result.scenario.data;
-      for (const edit of edits) {
+      for (const { edit } of changes) {
         const path = displayPath(edit.path);
         for (const previous of rejected.keys()) {
           if (contains(path, previous)) rejected.delete(previous);
@@ -79,23 +79,27 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     }
 
     const independent = [];
-    for (const edit of edits) {
+    for (const change of changes) {
+      const { edit } = change;
       const path = displayPath(edit.path);
-      const errors = result.errors.filter(error => contains(path, error.path) || contains(error.path, path));
-      if (errors.length) rejected.set(path, { edit, errors });
-      else independent.push(edit);
+      const errors = result.errors.filter(error => contains(path, error.path) ||
+        (error.code === 'size' ? change.notice === error.path : contains(error.path, path)));
+      if (errors.length) rejected.set(path, { ...change, errors });
+      else independent.push(change);
     }
-    if (independent.length && independent.length < edits.length && retryIndependent) await apply(independent, revision, false);
-    else for (const edit of independent) rejected.set(displayPath(edit.path), { edit, errors: result.errors });
+    if (independent.length && independent.length < changes.length && retryIndependent) await apply(independent, revision, false);
+    else for (const change of independent) {
+      rejected.set(displayPath(change.edit.path), { ...change, errors: result.errors });
+    }
   }
 
   function showErrors() {
     if (disposed) return;
     status.textContent = rejected.size ? 'Проверьте отмеченные поля' : '';
-    for (const [path, message] of notices) {
-      message.replaceChildren();
-      const failure = rejected.get(path);
-      if (!failure) continue;
+    for (const message of notices.values()) message.replaceChildren();
+    for (const [path, failure] of rejected) {
+      const message = notices.get(failure.notice);
+      if (!message) continue;
       message.append(document.createTextNode(failure.errors.map(error => error.message).join(' · ')));
       message.append(button('Сбросить правку', () => {
         rejected.delete(path);
@@ -129,9 +133,9 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     notices.set(fieldPath, message);
 
     if (schema.optional && binding) title.append(button(value === undefined ? 'Добавить' : 'Убрать', () =>
-      queue(path, defaultValue(schema), value !== undefined, true)));
+      queue(path, defaultValue(schema), value !== undefined, { redraw: true })));
     if (schema.nullable && binding && value !== undefined) title.append(button(value === null ? 'Задать' : 'Null', () =>
-      queue(path, value === null ? defaultValue(schema) : null, false, true)));
+      queue(path, value === null ? defaultValue(schema) : null, false, { redraw: true })));
 
     if (value === undefined || value === null || schema.kind === 'unknown') {
       wrapper.append(element('small', schema.diagnostics?.[0]?.message ??
@@ -143,11 +147,12 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     } else if (schema.kind === 'array') {
       value.forEach((item, index) => {
         const row = renderField(schema.items, [...path, index], String(index + 1), item, binding);
-        if (binding) row.firstChild.append(button('Удалить', () => queue([...path, index], undefined, true, true)));
+        if (binding) row.firstChild.append(button('Удалить', () =>
+          queue([...path, index], undefined, true, { redraw: true, notice: path })));
         wrapper.append(row);
       });
       if (binding) wrapper.append(button('Добавить элемент', () =>
-        queue([...path, value.length], defaultValue(schema.items), false, true)));
+        queue([...path, value.length], defaultValue(schema.items), false, { redraw: true, notice: path })));
     } else {
       const input = document.createElement(schema.enum ? 'select' : 'input');
       input.setAttribute('aria-label', label);

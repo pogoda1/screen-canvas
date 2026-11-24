@@ -13,7 +13,7 @@ test('editing survives a rapid Save and restores UI draft with the same server v
         title: { kind:'string', sources:[], maxLength:8, binding:{kind:'state', key:'title'} },
         settings: { kind:'object', sources:[], binding:{kind:'state', key:'settings'}, fields: {
           enabled: { kind:'boolean', sources:[] },
-          tags: { kind:'array', sources:[], maxItems:2, items:{kind:'string',sources:[]} }
+          tags: { kind:'array', sources:[], minItems:1, maxItems:2, items:{kind:'string',sources:[]} }
         } }
       } }),
       scenario: () => ({ data: {title:'Base', settings:{enabled:false,tags:['First']}} })
@@ -53,22 +53,39 @@ test('editing survives a rapid Save and restores UI draft with the same server v
   assert.equal(await guestEval(first.electron, "document.querySelector('#title').textContent"), 'Base');
   await first.shell.getByRole('checkbox', { name: 'enabled' }).check();
   const variantName = first.shell.getByRole('textbox', { name: 'Имя варианта' });
+  const save = first.shell.getByRole('button', { name: 'Сохранить', exact: true });
+  const append = first.shell.getByRole('button', { name: 'Добавить элемент' });
+  const listError = first.shell.locator('.field-error').filter({ hasText: 'List length is out of bounds' });
+  const resetList = listError.getByRole('button', { name: 'Сбросить правку' });
   await variantName.fill('Rejected draft');
-  await first.shell.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await first.shell.getByRole('button', { name: 'Удалить', exact: true }).click();
+  await resetList.waitFor();
+  assert.equal(await first.shell.getByRole('textbox', { name: '1', exact: true }).inputValue(), 'First');
+  await resetList.click();
+  await save.click();
   await first.shell.getByText('Исправьте значения полей перед сохранением').waitFor();
   await first.shell.getByText('Text length is out of bounds', { exact: false }).waitFor();
   assert.equal(await title.inputValue(), 'Oversized');
   await title.fill('Last');
-  await first.shell.getByRole('button', { name: 'Добавить элемент' }).click();
+  await append.click();
   await first.shell.getByRole('textbox', { name: '2', exact: true }).waitFor();
   await first.shell.getByRole('textbox', { name: '2', exact: true }).fill('Second');
+  await append.click();
+  await resetList.waitFor();
+  assert.equal(await listError.locator('..').locator(':scope > .field-title > label').textContent(), 'tags');
+  assert.equal(await first.shell.getByRole('textbox', { name: '3', exact: true }).count(), 0);
+  await save.click();
+  await first.shell.getByText('Исправьте значения полей перед сохранением').waitFor();
+  await resetList.click();
+  await listError.waitFor({ state: 'hidden' });
+  assert.equal(await first.shell.getByRole('textbox', { name: '2', exact: true }).inputValue(), 'Second');
   await guestEval(first.electron, `(() => {
     const input = document.querySelector('#level');
     input.value = 'C1_native'; input.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
   await first.shell.getByRole('textbox', { name: 'Имя варианта' }).fill('Restored option');
   await title.fill('Last!');
-  await first.shell.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await save.click();
   await first.shell.getByText('Вариант сохранён').waitFor();
   const scenarios = path.join(folder, 'screen-canvas/scenarios');
   const [filename] = await readdir(scenarios);
