@@ -163,7 +163,8 @@ export async function crawlGraph(worker, graph, signal, update) {
           edge.expectRequests.some(expected => record.method === expected.method && record.path === expected.path);
         const actionFailure = requestFailure(afterAction.filter(relevant));
         const backgroundFailure = requestFailure(afterAction.filter(record => !relevant(record)));
-        const actionPending = afterAction.some(record => record.status === 0);
+        const actionPending = afterAction.some(record => relevant(record) && record.status === 0);
+        const backgroundPending = afterAction.some(record => !relevant(record) && record.status === 0);
         if (actionFailure && !moved && !reason) reason = 'The request failed and the screen did not change';
         if (actionPending) reason ??= 'A local action request did not finish within the observation budget';
         const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
@@ -180,6 +181,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         if (actionFailure) evidence.actionFailure = actionFailure;
         if (backgroundFailure) evidence.backgroundFailure = backgroundFailure;
         if (actionPending) evidence.actionPending = true;
+        if (backgroundPending) evidence.backgroundPending = true;
         if (origin && (moved || evidence.status === 'confirmed')) evidence.origin = origin;
         edge.evidence = evidence;
       }

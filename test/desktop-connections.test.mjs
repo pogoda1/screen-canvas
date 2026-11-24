@@ -116,7 +116,7 @@ test('proportional frames anchor observed clicks and separate failed requests fr
         {id:'after-error',source:'route:/',target:'route:/done',label:'Continue after a failed request',
           steps:[{type:'click',selector:'#error-route'}]},
         {id:'after-navigation',source:'route:/',target:'route:/done',label:'Navigate before the response',
-          steps:[{type:'click',selector:'#navigate-first'}]},
+          steps:[{type:'click',selector:'#navigate-first'}],expectRequests:[{method:'POST',path:'/api/slow',status:200}]},
         {id:'pending',source:'route:/',target:'route:/done',label:'Navigate with pending request',
           steps:[{type:'click',selector:'#pending'}]},
         {id:'proof',source:'route:/',target:'route:/done',label:'Proved exchange',
@@ -148,7 +148,7 @@ test('proportional frames anchor observed clicks and separate failed requests fr
           <button id="navigate-first" onClick={() => { void fetch('/api/slow',{method:'POST'}); go('/done'); }}>Go then see error</button>
           <button id="pending" onClick={() => { void fetch('/api/pending',{method:'POST'}); go('/done'); }}>Wait at destination</button>
           <button id="proof" onClick={() => { void fetch('/api/retry',{method:'POST'});
-            void fetch('/api/answer',{method:'POST'}); go('/done'); }}>Send the proved request</button>
+            void fetch('/api/pending',{method:'POST'}); void fetch('/api/answer',{method:'POST'}); go('/done'); }}>Send the proved request</button>
           <button id="scrolled" style={{position:'absolute',top:1440,left:70,width:140,height:42}} onClick={() => go('/done')}>Action below the frame</button>
         </main>;
       }
@@ -203,9 +203,11 @@ test('proportional frames anchor observed clicks and separate failed requests fr
   await detail('wrong').getByText('Наблюдаемый путь · /other', { exact: true }).waitFor();
   await detail('wrong').getByText('Ожидаемый путь · /expected', { exact: true }).waitFor();
   await detail('after-navigation').getByText('Переход наблюдался при ошибке · POST /api/slow → 501', { exact: true }).waitFor();
+  await detail('after-navigation').getByText('Заявленный обмен не подтверждён', { exact: true }).waitFor();
   await detail('pending').getByText('Локальный запрос не завершился вовремя', { exact: true }).waitFor();
   await detail('proof').getByText('Заявленный обмен подтверждён', { exact: true }).waitFor();
   await detail('proof').getByText('Фоновая ошибка · POST /api/retry → 501', { exact: true }).waitFor();
+  await detail('proof').getByText('Фоновый запрос не завершился вовремя', { exact: true }).waitFor();
   assert.equal(await line('after-navigation').getAttribute('data-target'), 'route:/done');
   assert.equal(await line('pending').getAttribute('data-status'), 'unverified');
   assert.equal(await line('proof').getAttribute('data-status'), 'confirmed');

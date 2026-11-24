@@ -87,6 +87,7 @@ function directionGroup(title, edges, neighborId, neighbors) {
       ? 'Заявленный обмен подтверждён' : 'Заявленный обмен не подтверждён'));
     if (evidence.backgroundFailure) item.append(paragraph(
       'Фоновая ошибка · ' + evidence.backgroundFailure.message, 'diagnostic'));
+    if (evidence.backgroundPending) item.append(paragraph('Фоновый запрос не завершился вовремя', 'diagnostic'));
     if (evidence.actionPending) item.append(paragraph('Локальный запрос не завершился вовремя', 'diagnostic'));
     if (evidence.actionFailure) {
       const outcome = evidence.transitionObserved ? 'Переход наблюдался при ошибке' : 'Ошибка без перехода';
