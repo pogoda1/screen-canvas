@@ -23,7 +23,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
   let disposed = false;
   let graphRevision = 0;
   let stopping;
-  let openings = 0;
+  const openings = new Map();
   const sessions = new Map();
 
   const requireNode = id => {
@@ -91,7 +91,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     return copy;
   }
 
-  async function makeSession({ nodeId, mode, variantId, timeout }) {
+  async function makeSession({ nodeId, mode, variantId, timeout }, signal) {
     const node = requireNode(nodeId);
     let scenario;
     let defaults;
@@ -104,9 +104,11 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       defaults = await scenarioInput(node, mode);
       scenario = await createScenario(node, { mode, defaults });
     }
+    signal.throwIfAborted();
     const session = await openSession({ project, host, generation, scenario, timeout, bootstrapFile });
-    if (disposed) {
+    if (disposed || signal.aborted) {
       await session.close();
+      signal.throwIfAborted();
       throw new Error('Project closed');
     }
     session.saving = new Map();
@@ -119,6 +121,8 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
   async function shutdown() {
     if (!stopping) {
       disposed = true;
+      for (const opening of openings.values()) opening.abort();
+      openings.clear();
       stopping = (async () => {
         const closing = [...sessions.values()].map(session => session.close());
         sessions.clear();
@@ -147,11 +151,17 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       return scan();
     }
     if (operation === 'variants') return variants.list();
+    if (operation === 'cancel-open') {
+      openings.get(args.requestId)?.abort(new Error('Preview open expired'));
+      openings.delete(args.requestId);
+      return;
+    }
     if (operation === 'open') {
-      if (sessions.size + openings >= 3) throw new Error('Preview limit reached');
-      openings++;
-      try { return await makeSession(args); }
-      finally { openings--; }
+      if (sessions.size + openings.size >= 3) throw new Error('Preview limit reached');
+      const opening = new AbortController();
+      openings.set(message.id, opening);
+      try { return await makeSession(args, opening.signal); }
+      finally { openings.delete(message.id); }
     }
     if (operation === 'close' && !sessions.has(args.id)) return;
     const session = requireSession(args.id);
@@ -246,7 +256,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
   }
 
   port.on('message', async message => {
-    const envelope = { id: message?.id, generation: message?.generation };
+    const envelope = { id: message?.id, generation: message?.generation, operation: message?.operation };
     try {
       assertJson(message);
       const value = await command(message);

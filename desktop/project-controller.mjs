@@ -67,7 +67,7 @@ export class ProjectController {
   }
 }
 
-class ProjectWorker {
+export class ProjectWorker {
   pending = new Map();
   serial = 0;
   exited = false;
@@ -84,7 +84,12 @@ class ProjectWorker {
     child.on('message', message => {
       if (message?.generation !== generation) return;
       const request = this.pending.get(message.id);
-      if (!request) return;
+      if (!request) {
+        if (message.operation === 'open' && typeof message.value?.id === 'string') {
+          this.call('close', { id: message.value.id }).catch(() => {});
+        }
+        return;
+      }
       if (message.error) {
         request.reject(Object.assign(new Error(message.error.message), { code: message.error.code }));
       } else request.resolve(message.value);
@@ -102,7 +107,15 @@ class ProjectWorker {
         callback(value);
       };
       const onError = finish(reject);
-      const timer = setTimeout(() => onError(new Error('Timed out during ' + operation)), timeout);
+      const timer = setTimeout(() => {
+        onError(new Error('Timed out during ' + operation));
+        if (operation === 'open' && !this.exited) {
+          try {
+            this.child.postMessage({ id: ++this.serial, generation: this.generation,
+              operation: 'cancel-open', args: { requestId: id } });
+          } catch {}
+        }
+      }, timeout);
       this.pending.set(id, { resolve: finish(resolve), reject: onError });
       try { this.child.postMessage(envelope); }
       catch (error) { onError(error); }

@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:net';
 import { setTimeout } from 'node:timers/promises';
 import test from 'node:test';
+import { ProjectWorker } from '../desktop/project-controller.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
 test('isolates actual Vite worker listeners, fixtures and document revisions', { timeout: 20000 }, async t => {
@@ -99,4 +100,35 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
   assert.deepEqual(await exited, [0, null]);
   for (const { origin } of [a, b]) await assert.rejects(fetch(origin));
   assert.ok(control.listening);
+});
+
+
+test('expired opens release their slots without leaving late listeners', { timeout: 12_000 }, async t => {
+  const root = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      async scenario(node) {
+        if (node.path === '/') await new Promise(resolve => setTimeout(resolve, 400));
+        return {};
+      }
+    };`
+  });
+  const child = fork(new URL('./helpers/node-worker.mjs', import.meta.url), {
+    cwd: root, stdio: ['ignore', 'ignore', 'inherit', 'ipc']
+  });
+  const worker = new ProjectWorker({
+    on: child.on.bind(child), once: child.once.bind(child),
+    postMessage: child.send.bind(child), kill: child.kill.bind(child)
+  }, 12, () => {});
+  t.after(() => worker.stop());
+  await worker.call('start');
+  const expired = Array.from({ length: 3 }, () =>
+    assert.rejects(worker.call('open', { nodeId: 'route:/' }, 45), /Timed out/));
+  await Promise.all(expired);
+  const next = await worker.call('open', { nodeId: 'route:/next' });
+  await setTimeout(500);
+  const listening = execFileSync('/usr/sbin/lsof',
+    ['-nP', '-a', '-p', String(child.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'], { encoding: 'utf8' });
+  assert.deepEqual(listening.split('\n').filter(line => line.startsWith('n')), ['n' + new URL(next.origin).host]);
+  await worker.stop();
+  await assert.rejects(fetch(next.origin));
 });
