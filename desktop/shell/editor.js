@@ -7,7 +7,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
   let timer;
   let inFlight;
   let queued = new Map();
-  let errors = [];
+  const rejected = new Map();
   let loading = false;
   let dirtyStructure = false;
   const notices = new Map();
@@ -42,7 +42,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     inFlight ??= sendEdits().finally(() => { inFlight = undefined; });
     await inFlight;
     if (queued.size && !disposed) return flush();
-    return !disposed && !errors.length;
+    return !disposed && !rejected.size;
   }
 
   async function sendEdits() {
@@ -52,22 +52,53 @@ export function createEditor(root, api, generation, preview, open, variantId) {
       dirtyStructure = false;
       queued = new Map();
       status.textContent = 'Применяем…';
-      try {
-        const result = await api.patch(generation, preview.id, edits);
-        if (disposed) return;
-        errors = result.errors;
-        if (!errors.length) {
-          data = result.scenario.data;
-          if (redraw && !queued.size) render();
+      await apply(edits);
+      if (redraw && !queued.size && !disposed) render();
+      showErrors();
+
+    }
+  }
+
+  async function apply(edits, retryIndependent = true) {
+    let result;
+    try { result = await api.patch(generation, preview.id, edits); }
+    catch (error) { result = { errors: [{ path: '$', message: error.message }] }; }
+    if (disposed) return;
+    if (!result.errors.length) {
+      data = result.scenario.data;
+      for (const edit of edits) {
+        const path = displayPath(edit.path);
+        for (const previous of rejected.keys()) {
+          if (contains(path, previous)) rejected.delete(previous);
         }
-        status.textContent = errors.length ? 'Проверьте отмеченные поля' : '';
-      } catch (error) {
-        errors = [{ path: '$', message: error.message }];
-        status.textContent = error.message;
       }
-      for (const [path, message] of notices) {
-        message.textContent = errors.filter(error => error.path === path).map(error => error.message).join(' · ');
-      }
+      return;
+    }
+
+    const independent = [];
+    for (const edit of edits) {
+      const path = displayPath(edit.path);
+      const errors = result.errors.filter(error => contains(path, error.path) || contains(error.path, path));
+      if (errors.length) rejected.set(path, { edit, errors });
+      else independent.push(edit);
+    }
+    if (independent.length && independent.length < edits.length && retryIndependent) await apply(independent, false);
+    else for (const edit of independent) rejected.set(displayPath(edit.path), { edit, errors: result.errors });
+  }
+
+  function showErrors() {
+    if (disposed) return;
+    status.textContent = rejected.size ? 'Проверьте отмеченные поля' : '';
+    for (const [path, message] of notices) {
+      message.replaceChildren();
+      const failure = rejected.get(path);
+      if (!failure) continue;
+      message.append(document.createTextNode(failure.errors.map(error => error.message).join(' · ')));
+      message.append(button('Сбросить правку', () => {
+        rejected.delete(path);
+        render();
+        showErrors();
+      }));
     }
   }
 
@@ -89,7 +120,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     wrapper.append(title);
     const description = schema.sources.map(source => source.kind + ' · ' + source.path).join('\n');
     if (description) name.title = description;
-    const fieldPath = '$' + path.map(key => Number.isInteger(key) ? '[' + key + ']' : '.' + key).join('');
+    const fieldPath = displayPath(path);
     const message = element('small', undefined, 'field-error');
     message.setAttribute('aria-live', 'polite');
     notices.set(fieldPath, message);
@@ -138,6 +169,12 @@ export function createEditor(root, api, generation, preview, open, variantId) {
         input.addEventListener('input', () => queue(path, input.type === 'number' ?
           (Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : null) : input.value));
       }
+      const failed = rejected.get(fieldPath)?.edit;
+      if (failed && !failed.remove) {
+        if (schema.enum) input.value = String(schema.enum.findIndex(option => Object.is(option, failed.value)));
+        else if (schema.kind === 'boolean') input.checked = failed.value;
+        else input.value = failed.value ?? '';
+      }
       name.append(input);
     }
     if (schema.readOnlyReason) wrapper.append(element('small', schema.readOnlyReason, 'read-only'));
@@ -162,4 +199,12 @@ function defaultValue(schema) {
   if (schema.kind === 'object') return Object.fromEntries(Object.entries(schema.fields ?? {})
     .filter(([, field]) => !field.optional && field.kind !== 'unknown').map(([key, field]) => [key, defaultValue(field)]));
   return null;
+}
+
+function displayPath(path) {
+  return '$' + path.map(key => Number.isInteger(key) ? '[' + key + ']' : '.' + key).join('');
+}
+
+function contains(path, descendant) {
+  return descendant === path || descendant.startsWith(path + '.') || descendant.startsWith(path + '[');
 }

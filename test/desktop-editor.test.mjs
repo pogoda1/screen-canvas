@@ -51,8 +51,14 @@ test('editing survives a rapid Save and restores UI draft with the same server v
   await title.fill('Oversized');
   await first.shell.getByText('Text length is out of bounds').waitFor();
   assert.equal(await guestEval(first.electron, "document.querySelector('#title').textContent"), 'Base');
-  await title.fill('Last');
   await first.shell.getByRole('checkbox', { name: 'enabled' }).check();
+  const variantName = first.shell.getByRole('textbox', { name: 'Имя варианта' });
+  await variantName.fill('Rejected draft');
+  await first.shell.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await first.shell.getByText('Исправьте значения полей перед сохранением').waitFor();
+  await first.shell.getByText('Text length is out of bounds', { exact: false }).waitFor();
+  assert.equal(await title.inputValue(), 'Oversized');
+  await title.fill('Last');
   await first.shell.getByRole('button', { name: 'Добавить элемент' }).click();
   await first.shell.getByRole('textbox', { name: '2', exact: true }).waitFor();
   await first.shell.getByRole('textbox', { name: '2', exact: true }).fill('Second');
