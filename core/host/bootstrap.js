@@ -74,6 +74,9 @@
       else observe(owner);
     }
     for (const element of main.querySelectorAll('input:not([type="hidden"]),textarea,select,img,svg,canvas,video')) {
+      // A decorative image can accompany a loader without providing screen content.
+      if (element.matches('img[alt]') && !element.getAttribute('alt').trim() ||
+          element.matches('[role="presentation"],[role="none"]')) continue;
       if (visible(element)) observe(element);
     }
     return { content, loading: explicitLoading || (busy && !content), mounted };

@@ -5,6 +5,7 @@ import { makeHost } from './helpers/host-fixture.mjs';
 
 test('Chromium captures node content and proves distinct observed actions', { timeout: 45000 }, async t => {
   const folder = await makeHost(t, {
+    'public/spinner.gif': Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'),
     'screen-canvas.config.mjs': `export default {
       createMocks: () => ({ path }) => path === '/api/answer' ? { body: { ok: true } } : undefined,
       actions: [
@@ -53,7 +54,10 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         <Route path="/broken" element={<Boundary><Broken /></Boundary>}/>
         <Route path="/loading" element={<div data-screen-canvas-loading><h1>Loading</h1></div>}/>
         <Route path="/text-loading" element={<p>Loading…</p>}/>
+        <Route path="/decorative-loading" element={<main><p>Loading…</p><img alt="" src="/spinner.gif"/></main>}/>
         <Route path="/busy" element={<main aria-busy="true">Getting the screen ready</main>}/>
+        <Route path="/local-busy" element={<main><h1>Ready catalog</h1><aside aria-busy="true">Loading…</aside></main>}/>
+        <Route path="/image" element={<main><img alt="Product preview" src="/spinner.gif"/></main>}/>
         <Route path="/deferred" element={<Deferred/>}/>
         <Route path="/about" element={<main>About</main>}/>
         <Route path="/empty" element={<main><h1>Product</h1></main>}>
@@ -84,7 +88,7 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   const layout = graph.nodes.find(node => node.id === 'route:/next');
   assert.ok(index.screenshot?.startsWith('data:image/png;base64,iVBOR'));
   assert.ok(index.screenshot.length > 3000);
-  for (const id of ['route:/about', 'route:/deferred']) {
+  for (const id of ['route:/about', 'route:/deferred', 'route:/local-busy', 'route:/image']) {
     const node = graph.nodes.find(item => item.id === id);
     assert.ok(node.screenshot?.startsWith('data:image/png;base64,iVBOR'), id);
     assert.deepEqual(node.diagnostics, [], id);
@@ -93,11 +97,11 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(layout.diagnostics.at(-1).code, 'different-screen');
   for (const [id, diagnostic] of [
     ['route:/broken', 'render-error'], ['route:/loading', 'loading-timeout'],
-    ['route:/text-loading', 'loading-timeout'], ['route:/busy', 'loading-timeout'],
+    ['route:/text-loading', 'loading-timeout'], ['route:/decorative-loading', 'loading-timeout'], ['route:/busy', 'loading-timeout'],
     ['route:/empty#index', 'index-unmounted']
   ]) {
     const node = graph.nodes.find(item => item.id === id);
-    assert.equal(node.screenshot, undefined, id);
+    assert.equal(Boolean(node.screenshot), false, id);
     assert.equal(node.diagnostics.at(-1).code, diagnostic, id);
   }
   assert.equal(graph.edges.find(edge => edge.action === 'link').evidence.status, 'confirmed');
