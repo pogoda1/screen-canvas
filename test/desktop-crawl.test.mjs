@@ -15,12 +15,16 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{value:'expected'}}],
         steps:[{type:'click',selector:'#answer'}] },
       { id:'accepted-answer', source:'route:/', target:'route:/next#index', label:'Expected answer',
-        expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{value:'observed'}}],
+        expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{
+          value:'observed', target:'answer-label', trusted:true,
+          sequence:['pointerdown','mousedown','pointerup','mouseup','click']}}],
         steps:[{type:'click',selector:'#answer'}] },
       { id:'wrong-destination', source:'route:/', target:'route:/next#index', label:'Wrong destination',
         expectedPath:'/next', steps:[{type:'click',selector:'#wrong-destination'}] },
       { id:'covered', source:'route:/', target:'route:/next#index',
         label:'Covered control', steps:[{type:'click',selector:'#covered'}] },
+      { id:'nested-blocker', source:'route:/', target:'route:/next#index',
+        label:'Intercepted label', steps:[{type:'click',selector:'#parent'}] },
       { id:'one', source:'route:/', target:'route:/next#index', role:'guest', condition:'One',
         label:'Continue', steps:[{type:'click',selector:'#one'}] },
       { id:'two', source:'route:/', target:'route:/next#index', role:'member', condition:'Two',
@@ -34,16 +38,27 @@ test('Chromium captures node content and proves distinct observed actions', { ti
       import { BrowserRouter, Routes, Route, Link, Navigate, Outlet, useNavigate } from 'react-router-dom';
       function Home() {
         const navigate = useNavigate();
+        const sequence = React.useRef([]);
+        const record = event => sequence.current.push(event.type);
+        const submit = event => {
+          record(event);
+          return fetch('/api/answer', { method: 'POST', body: JSON.stringify({
+            value:'observed', target:event.target.id, trusted:event.nativeEvent.isTrusted, sequence:sequence.current
+          }) }).then(() => setTimeout(() => navigate('/next'), 650));
+        };
         return <main><h1>Home screen</h1><Link to="/next">Next screen</Link>
           <button id="one" onClick={() => navigate('/next')}>One</button>
           <button id="two" onClick={() => navigate('/next')}>Two</button>
           <button id="wrong-destination" onClick={() => setTimeout(() => navigate('/about'), 650)}>About</button>
           <div style={{position:'relative',width:'max-content'}}>
-            <button id="covered" onClick={() => navigate('/next')}>Covered</button>
+            <button id="covered" onClick={submit}>Covered</button>
             <span aria-hidden="true" style={{position:'absolute',inset:0}}/>
           </div>
-          <button id="answer" onClick={() => fetch('/api/answer', { method: 'POST', body: JSON.stringify({value:'observed'}) })
-            .then(() => setTimeout(() => navigate('/next'), 650))}>Answer</button></main>;
+          <button id="parent" onClick={submit}>
+            <span style={{display:'block'}} onClick={event => event.stopPropagation()}>Intercepted answer</span>
+          </button>
+          <button id="answer" onPointerDown={record} onMouseDown={record} onPointerUp={record} onMouseUp={record}
+            onClick={submit}><span id="answer-label" style={{display:'block'}}>Answer</span></button></main>;
       }
       function Broken() { throw new Error('Broken route render'); }
       function Deferred() {
@@ -114,14 +129,23 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(graph.edges.find(edge => edge.action === 'redirect').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.id === 'one').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.id === 'two').evidence.status, 'confirmed');
-  assert.equal(graph.edges.find(edge => edge.id === 'accepted-answer').evidence.status, 'confirmed');
+  const answer = graph.edges.find(edge => edge.id === 'accepted-answer').evidence;
+  assert.equal(answer.status, 'confirmed', JSON.stringify(answer));
+  assert.equal(answer.actualTarget, 'route:/next#index');
+  assert.deepEqual(answer.requests.filter(request => request.method === 'POST'),
+    [{ method: 'POST', path: '/api/answer', status: 200 }]);
   assert.match(graph.edges.find(edge => edge.id === 'wrong-answer').evidence.reason, /submitted answer/);
   const wrongDestination = graph.edges.find(edge => edge.id === 'wrong-destination').evidence;
   assert.equal(wrongDestination.status, 'unverified');
   assert.equal(wrongDestination.actualTarget, 'route:/about');
   const covered = graph.edges.find(edge => edge.id === 'covered').evidence;
   assert.equal(covered.status, 'unverified');
+  assert.ok(!covered.requests.some(request => request.method === 'POST'));
   assert.match(covered.reason, /unavailable/);
+  const blocked = graph.edges.find(edge => edge.id === 'nested-blocker').evidence;
+  assert.equal(blocked.status, 'unverified', JSON.stringify(blocked));
+  assert.equal(blocked.actualPath, '/');
+  assert.ok(!blocked.requests.some(request => request.method === 'POST'));
   const wrongDoc = graph.edges.find(edge => edge.id === 'wrong-doc').evidence;
   assert.equal(wrongDoc.status, 'unverified');
   assert.equal(wrongDoc.actualPath, '/legal/privacy');

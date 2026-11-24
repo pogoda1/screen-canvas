@@ -50,18 +50,31 @@ export async function runAction(capture, edge, target, signal) {
 }
 
 async function click(contents, query) {
-  // Hidden capture windows cannot rely on native pointer delivery. Activate the
-  // same local control in its document after checking that it can receive a hit.
-  const clicked = await contents.executeJavaScript(`(() => {
+  const point = await contents.executeJavaScript(`(async () => {
     const target = ${query};
     if (!(target instanceof HTMLElement) || target.matches(':disabled,[aria-disabled="true"]') ||
-        target.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
+        target.closest('[inert],[hidden],[aria-hidden="true"]')) return null;
     target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-    const reachable = Array.from(target.getClientRects()).some(box => target.contains(document.elementFromPoint(
-      box.left + box.width / 2, box.top + box.height / 2)));
-    if (!reachable) return false;
-    target.click();
-    return true;
+    // Let Chromium publish a frame with the updated hit-test regions before
+    // sending input to an offscreen surface.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    for (const box of target.getClientRects()) {
+      const x = box.left + box.width / 2, y = box.top + box.height / 2;
+      if (target.contains(document.elementFromPoint(x, y))) return { x, y };
+    }
+    return null;
   })()`);
-  if (!clicked) throw new Error('The action control is unavailable');
+  if (!point) throw new Error('The action control is unavailable');
+  // Send pointer events to this capture's Chromium target. The renderer picks
+  // the actual hit element and dispatches the event through its ancestor path.
+  const debuggerSession = contents.debugger;
+  debuggerSession.attach('1.3');
+  try {
+    const dispatch = (type, fields) => debuggerSession.sendCommand('Input.dispatchMouseEvent', { type, ...point, ...fields });
+    await dispatch('mouseMoved');
+    await dispatch('mousePressed', { button: 'left', buttons: 1, clickCount: 1 });
+    await dispatch('mouseReleased', { button: 'left', buttons: 0, clickCount: 1 });
+  } finally {
+    if (!contents.isDestroyed() && debuggerSession.isAttached()) debuggerSession.detach();
+  }
 }
