@@ -83,6 +83,11 @@ function directionGroup(title, edges, neighborId, neighbors) {
     }
     const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' : 'Источник стрелки · Экран');
     if (source) item.append(paragraph(source));
+    if (evidence.requestCheck) item.append(paragraph(evidence.requestCheck === 'verified'
+      ? 'Заявленный обмен подтверждён' : 'Заявленный обмен не подтверждён'));
+    if (evidence.backgroundFailure) item.append(paragraph(
+      'Фоновая ошибка · ' + evidence.backgroundFailure.message, 'diagnostic'));
+    if (evidence.actionPending) item.append(paragraph('Локальный запрос не завершился вовремя', 'diagnostic'));
     if (evidence.actionFailure) {
       const outcome = evidence.transitionObserved ? 'Переход наблюдался при ошибке' : 'Ошибка без перехода';
       item.append(paragraph(outcome + ' · ' + evidence.actionFailure.message, 'diagnostic'));

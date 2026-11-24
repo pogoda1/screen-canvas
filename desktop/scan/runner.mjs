@@ -9,7 +9,7 @@ async function settleRequests(capture, signal) {
   if (!capture) return [];
   const deadline = Date.now() + 1500;
   let records = await capture.requests();
-  while (!signal.aborted && !requestFailure(records) && records.some(request => request.status === 0) &&
+  while (!signal.aborted && records.some(request => request.status === 0) &&
       Date.now() < deadline) {
     try { await setTimeout(50, undefined, { signal }); }
     catch { break; }
@@ -82,7 +82,8 @@ export async function crawlGraph(worker, graph, signal, update) {
   async function observeEdge(edge) {
     let capture;
     let observed;
-    let actualPath;
+    let records;
+    let requestCheck;
     let initialPath;
     let after;
     let origin;
@@ -118,12 +119,19 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
       }
       observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
-      const url = capture.contents.isDestroyed() ? undefined : capture.contents.getURL();
-      if (url) actualPath = new URL(url).pathname;
-      if (edge.expectedPath && actualPath && !routeMatches(edge.expectedPath, actualPath)) {
-        reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
-      } else if (observed.ready && observed.id === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
-        reason = await capture.verify(after ?? 0, edge);
+      records = await settleRequests(capture, jobSignal);
+      if (!jobSignal.aborted && observed.url !== capture.contents.getURL()) {
+        observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout });
+      }
+      if (edge.expectRequests && !jobSignal.aborted) {
+        const failure = await capture.verify(after ?? 0, { expectRequests: edge.expectRequests });
+        requestCheck = failure ? 'unverified' : 'verified';
+        reason = failure;
+      }
+      if (edge.expectedPath && observed.pathname && !routeMatches(edge.expectedPath, observed.pathname)) {
+        reason = 'Expected ' + edge.expectedPath + ', observed ' + observed.pathname;
+      } else if (observed.ready && observed.id === edge.target && edge.expectSnapshot && !reason && !jobSignal.aborted) {
+        reason = await capture.verify(after ?? 0, { expectSnapshot: edge.expectSnapshot });
       }
       if (edge.action === 'redirect' && !edge.direct && observed.id === edge.target && !reason) {
         reason = 'The destination was observed, but the automatic branch was not proved';
@@ -132,25 +140,34 @@ export async function crawlGraph(worker, graph, signal, update) {
     } catch (error) { reason = error.message; }
     finally {
       if (!signal.aborted) {
-        const records = redirects ? await settleRequests(capture, jobSignal) : await capture?.requests() ?? [];
-        const requests = localRequests(records);
+        const entries = records ?? await capture?.requests() ?? [];
+        const requests = localRequests(entries);
+        const actualPath = observed?.pathname;
         // The action is proved by its declared exchanges and observed target.
         // Other responses remain evidence and still block a source thumbnail.
         const moved = Boolean(actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source));
-        const actionFailure = after === undefined ? undefined :
-          requestFailure(records.filter(record => record.sequence > after));
-        if (actionFailure && !moved) reason = 'The request failed and the screen did not change';
+        const afterAction = after === undefined ? [] : entries.filter(record => record.sequence > after);
+        const relevant = record => !edge.expectRequests?.length ||
+          edge.expectRequests.some(expected => record.method === expected.method && record.path === expected.path);
+        const actionFailure = requestFailure(afterAction.filter(relevant));
+        const backgroundFailure = requestFailure(afterAction.filter(record => !relevant(record)));
+        const actionPending = afterAction.some(record => record.status === 0);
+        if (actionFailure && !moved && !reason) reason = 'The request failed and the screen did not change';
+        if (actionPending) reason ??= 'A local action request did not finish within the observation budget';
         const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
         if (moved) {
           evidence.transitionObserved = true;
-          const failure = redirects && requestFailure(records);
-          const pending = redirects && records.some(request => request.status === 0);
+          const failure = redirects && requestFailure(entries);
+          const pending = redirects && entries.some(request => request.status === 0);
           evidence.targetReady = Boolean(observed?.ready && !failure && !pending);
           if (failure) evidence.targetReason = failure.message;
           else if (pending) evidence.targetReason = 'A local request did not finish within the capture budget';
           else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
         }
+        if (requestCheck) evidence.requestCheck = requestCheck;
         if (actionFailure) evidence.actionFailure = actionFailure;
+        if (backgroundFailure) evidence.backgroundFailure = backgroundFailure;
+        if (actionPending) evidence.actionPending = true;
         if (origin && (moved || evidence.status === 'confirmed')) evidence.origin = origin;
         edge.evidence = evidence;
       }

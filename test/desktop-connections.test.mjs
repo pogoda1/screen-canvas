@@ -115,12 +115,22 @@ test('proportional frames anchor observed clicks and separate failed requests fr
         {id:'stay',source:'route:/',target:'route:/done',label:'Try again',steps:[{type:'click',selector:'#stay'}]},
         {id:'after-error',source:'route:/',target:'route:/done',label:'Continue after a failed request',
           steps:[{type:'click',selector:'#error-route'}]},
+        {id:'after-navigation',source:'route:/',target:'route:/done',label:'Navigate before the response',
+          steps:[{type:'click',selector:'#navigate-first'}]},
+        {id:'pending',source:'route:/',target:'route:/done',label:'Navigate with pending request',
+          steps:[{type:'click',selector:'#pending'}]},
+        {id:'proof',source:'route:/',target:'route:/done',label:'Proved exchange',
+          steps:[{type:'click',selector:'#proof'}],expectRequests:[{method:'POST',path:'/api/answer',status:200}]},
         {id:'missing',source:'route:/',target:'route:/expected',label:'Missing control',steps:[{type:'click',selector:'#missing'}]},
         {id:'scrolled',source:'route:/',target:'route:/done',label:'Action below the frame',steps:[{type:'click',selector:'#scrolled'}]},
         {id:'automatic',source:'route:/auto',target:'route:/done',label:'Automatic redirect',
           expectedPath:'/done',steps:[{type:'redirect'}]}
       ],
-      createMocks() { return request => request.path === '/api/retry' ? {status:501,body:{}} : undefined; }
+      createMocks() { return async ({path}) => {
+        if (path === '/api/slow') await new Promise(resolve => setTimeout(resolve, 650));
+        if (path === '/api/pending') await new Promise(resolve => setTimeout(resolve, 5000));
+        return { status:path === '/api/answer' ? 200 : 501, body:{} };
+      }; }
     };`,
     'src/main.jsx': `
       import React from 'react';
@@ -135,6 +145,10 @@ test('proportional frames anchor observed clicks and separate failed requests fr
           <button id="stay" style={{position:'absolute',top:330,left:70,width:140,height:42}} onClick={fail}>Try again</button>
           <button id="error-route" style={{position:'absolute',top:410,left:70,width:140,height:42}}
             onClick={async () => { await fail(); go('/done'); }}>Continue after error</button>
+          <button id="navigate-first" onClick={() => { void fetch('/api/slow',{method:'POST'}); go('/done'); }}>Go then see error</button>
+          <button id="pending" onClick={() => { void fetch('/api/pending',{method:'POST'}); go('/done'); }}>Wait at destination</button>
+          <button id="proof" onClick={() => { void fetch('/api/retry',{method:'POST'});
+            void fetch('/api/answer',{method:'POST'}); go('/done'); }}>Send the proved request</button>
           <button id="scrolled" style={{position:'absolute',top:1440,left:70,width:140,height:42}} onClick={() => go('/done')}>Action below the frame</button>
         </main>;
       }
@@ -188,6 +202,13 @@ test('proportional frames anchor observed clicks and separate failed requests fr
   await detail('after-error').getByText('Переход наблюдался при ошибке · POST /api/retry → 501', { exact: true }).waitFor();
   await detail('wrong').getByText('Наблюдаемый путь · /other', { exact: true }).waitFor();
   await detail('wrong').getByText('Ожидаемый путь · /expected', { exact: true }).waitFor();
+  await detail('after-navigation').getByText('Переход наблюдался при ошибке · POST /api/slow → 501', { exact: true }).waitFor();
+  await detail('pending').getByText('Локальный запрос не завершился вовремя', { exact: true }).waitFor();
+  await detail('proof').getByText('Заявленный обмен подтверждён', { exact: true }).waitFor();
+  await detail('proof').getByText('Фоновая ошибка · POST /api/retry → 501', { exact: true }).waitFor();
+  assert.equal(await line('after-navigation').getAttribute('data-target'), 'route:/done');
+  assert.equal(await line('pending').getAttribute('data-status'), 'unverified');
+  assert.equal(await line('proof').getAttribute('data-status'), 'confirmed');
   async function checkAnchor() {
     const point = await marks.locator('[data-edge-id="open"] circle').evaluate(circle => {
       const image = document.querySelector('#cards [data-node="route:/"] img').getBoundingClientRect();

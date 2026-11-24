@@ -20,7 +20,10 @@ export interface Evidence {
   transitionObserved?: boolean;
   targetReady?: boolean;
   targetReason?: string;
+  requestCheck?: 'verified' | 'unverified';
   actionFailure?: Diagnostic;
+  backgroundFailure?: Diagnostic;
+  actionPending?: boolean;
   /** Normalized coordinates on the verified source frame. */
   origin?: { x: number; y: number };
 }
