@@ -59,7 +59,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         after = await capture.cursor();
         await runAction(capture, edge, target, signal);
       }
-      const observed = await awaitScreen(capture, graph, signal, { expected: edge.target, timeout });
+      const observed = await awaitScreen(capture, graph, signal, { expected: edge.target, from: edge.source, timeout });
       actual = observed.id;
       const url = capture.contents.getURL();
       if (url) actualPath = new URL(url).pathname;

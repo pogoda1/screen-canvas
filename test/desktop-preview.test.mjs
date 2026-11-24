@@ -50,10 +50,10 @@ test('a real isolated preview submits a form and saves the latest fetch-bound re
   const first = shell.getByRole('button', { name: '/', exact: true });
   await first.click();
   await waitGuest(electron, "document.querySelector('input')?.value === 'First'");
-  const info = await electron.evaluate(({ BrowserWindow, webContents }) => {
-    const window = BrowserWindow.getAllWindows()[0];
-    const view = window.contentView.children.at(-1);
-    const guest = webContents.getAllWebContents().find(wc => wc.getURL().startsWith('http://127.0.0.1:'));
+  const info = await electron.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL() === 'app://canvas/index.html');
+    const view = window.contentView.children.find(child => child.webContents?.getURL().startsWith('http://127.0.0.1:'));
+    const guest = view.webContents;
     return { bounds: view.getBounds(), sandbox: guest.getLastWebPreferences().sandbox,
       separate: guest.session !== window.webContents.session };
   });
@@ -63,9 +63,11 @@ test('a real isolated preview submits a form and saves the latest fetch-bound re
     ['undefined', 'undefined', 'undefined']);
   assert.equal(await guestEval(electron, "window.open('https://example.invalid/') === null"), true);
   await guestEval(electron, "document.querySelector('input').focus()");
-  await electron.evaluate(({ BrowserWindow, webContents }) => {
-    BrowserWindow.getAllWindows()[0].focus();
-    const guest = webContents.getAllWebContents().find(wc => wc.getURL().startsWith('http://127.0.0.1:'));
+  await electron.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL() === 'app://canvas/index.html');
+    window.focus();
+    const view = window.contentView.children.find(child => child.webContents?.getURL().startsWith('http://127.0.0.1:'));
+    const guest = view.webContents;
     guest.focus();
     guest.sendInputEvent({ type: 'keyDown', keyCode: 'End' });
     guest.sendInputEvent({ type: 'keyUp', keyCode: 'End' });

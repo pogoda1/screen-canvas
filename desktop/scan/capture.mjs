@@ -43,7 +43,7 @@ export async function createCapture(worker, nodeId, role, signal) {
   };
 }
 
-export async function awaitScreen(capture, graph, signal, { expected, timeout = 2600 } = {}) {
+export async function awaitScreen(capture, graph, signal, { expected, from, timeout = 2600 } = {}) {
   const deadline = Date.now() + timeout;
   let actual;
   let obstruction;
@@ -76,7 +76,7 @@ export async function awaitScreen(capture, graph, signal, { expected, timeout = 
         last = actual;
       }
       if (!expected && Date.now() - firstObserved > 100) return { id: actual, ready: true };
-      if (actual && Date.now() - firstObserved > 350) return { id: actual, ready: true };
+      if (actual && actual !== from && Date.now() - firstObserved > 350) return { id: actual, ready: true };
     }
     await setTimeout(40, undefined, { signal });
   }
