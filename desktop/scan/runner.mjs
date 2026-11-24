@@ -1,7 +1,8 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
 import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
-import { awaitScreen, CAPTURE_JOB_MS, createCapture, captureScreen } from './capture.mjs';
+import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen } from './capture.mjs';
+import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
 
 async function settleRequests(capture, signal) {
@@ -83,7 +84,8 @@ export async function crawlGraph(worker, graph, signal, update) {
     let observed;
     let actualPath;
     let initialPath;
-    let after = 0;
+    let after;
+    let origin;
     let reason;
     let redirects;
     let jobSignal;
@@ -99,8 +101,21 @@ export async function crawlGraph(worker, graph, signal, update) {
         const source = await awaitScreen(capture, graph, jobSignal, { expected: edge.source, timeout, waitForNavigation: true });
         if (source.id !== edge.source || !source.ready) throw new Error(source.diagnostic?.message ?? 'The source screen was not observed');
         initialPath = source.pathname;
-        after = await capture.cursor();
-        await runAction(capture, edge, target, jobSignal);
+        const screenshot = nodes.get(edge.source)?.screenshot;
+        const observeControl = screenshot && (async hit => {
+          const ready = await awaitScreen(capture, graph, jobSignal, {
+            expected: edge.source, timeout: 1300, forCapture: true
+          });
+          if (!ready.ready || ready.id !== edge.source || ready.pathname !== initialPath ||
+              ready.documentVersion !== source.documentVersion) return;
+          const frame = await captureControlFrame(capture, jobSignal).catch(() => undefined);
+          const point = matchControl(frame, screenshot, hit);
+          if (point) return () => { origin = point; };
+        });
+        await runAction(capture, edge, target, jobSignal, {
+          observeControl,
+          beforeInput: async () => { after = await capture.cursor(); }
+        });
       }
       observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
       const url = capture.contents.isDestroyed() ? undefined : capture.contents.getURL();
@@ -108,7 +123,7 @@ export async function crawlGraph(worker, graph, signal, update) {
       if (edge.expectedPath && actualPath && !routeMatches(edge.expectedPath, actualPath)) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
       } else if (observed.ready && observed.id === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
-        reason = await capture.verify(after, edge);
+        reason = await capture.verify(after ?? 0, edge);
       }
       if (edge.action === 'redirect' && !edge.direct && observed.id === edge.target && !reason) {
         reason = 'The destination was observed, but the automatic branch was not proved';
@@ -121,8 +136,12 @@ export async function crawlGraph(worker, graph, signal, update) {
         const requests = localRequests(records);
         // The action is proved by its declared exchanges and observed target.
         // Other responses remain evidence and still block a source thumbnail.
+        const moved = Boolean(actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source));
+        const actionFailure = after === undefined ? undefined :
+          requestFailure(records.filter(record => record.sequence > after));
+        if (actionFailure && !moved) reason = 'The request failed and the screen did not change';
         const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
-        if (actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source)) {
+        if (moved) {
           evidence.transitionObserved = true;
           const failure = redirects && requestFailure(records);
           const pending = redirects && records.some(request => request.status === 0);
@@ -131,6 +150,8 @@ export async function crawlGraph(worker, graph, signal, update) {
           else if (pending) evidence.targetReason = 'A local request did not finish within the capture budget';
           else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
         }
+        if (actionFailure) evidence.actionFailure = actionFailure;
+        if (origin && (moved || evidence.status === 'confirmed')) evidence.origin = origin;
         edge.evidence = evidence;
       }
       await capture?.close();

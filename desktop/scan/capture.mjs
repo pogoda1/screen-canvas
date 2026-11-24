@@ -4,6 +4,8 @@ import { addAbortListener } from 'node:events';
 import { identifyNode } from '../../core/graph-evidence.mjs';
 import { previewPolicy } from '../session-policy.mjs';
 
+export const frameRect = { x: 0, y: 0, width: 390, height: 844 };
+
 export async function createCapture(worker, nodeId, role, signal) {
   signal.throwIfAborted();
   const opening = worker.call('open', { nodeId, ...(role ? { mode: role } : {}) }, 5000);
@@ -14,7 +16,7 @@ export async function createCapture(worker, nodeId, role, signal) {
     throw error;
   }
   const policy = previewPolicy(preview.origin, preview.navigationKey);
-  const window = new BrowserWindow({ width: 390, height: 844, useContentSize: true, show: false,
+  const window = new BrowserWindow({ width: frameRect.width, height: frameRect.height, useContentSize: true, show: false,
     webPreferences: { ...policy.preferences, offscreen: true, paintWhenInitiallyHidden: true } });
   const { webContents: contents } = window;
   policy.attach(contents);
@@ -76,6 +78,13 @@ async function withBudget(operation, signal, ms) {
   });
   try { return await Promise.race([operation, aborted]); }
   finally { listener[Symbol.dispose](); }
+}
+
+export async function captureControlFrame(capture, signal) {
+  const version = capture.documentVersion;
+  const url = capture.contents.getURL();
+  const frame = await withBudget(capture.contents.capturePage(frameRect), signal, 350);
+  if (capture.documentVersion === version && capture.contents.getURL() === url && !frame.isEmpty()) return frame;
 }
 
 function currentLocation(capture) {
@@ -199,7 +208,7 @@ export async function captureScreen(capture, graph, signal, expected) {
       const before = await readScreen(capture, graph, signal, true, deadline - Date.now());
       if (sameScreen(observed, before)) {
         const image = await withBudget(
-          capture.contents.capturePage({ x: 0, y: 0, width: 390, height: 844 }),
+          capture.contents.capturePage(frameRect),
           signal, Math.min(FRAME_MS, deadline - Date.now())
         );
         const after = await readScreen(capture, graph, signal, true, deadline - Date.now());

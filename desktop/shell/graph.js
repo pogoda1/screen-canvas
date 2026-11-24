@@ -20,30 +20,39 @@ export const transitionLabels = {
   unexpected: 'Незаявленное назначение'
 };
 
-function connector(from, to, offset) {
-  const y = from.y + 66 + offset;
-  const targetY = to.y + 66 + offset;
-  if (from === to) {
-    const x = from.x + 191;
+export function connectionTarget(edge) {
+  const evidence = edge.evidence;
+  if (evidence.status === 'static' || evidence.status === 'confirmed') return edge.target;
+  if (evidence.transitionObserved && (edge.action !== 'redirect' || edge.direct)) return evidence.actualTarget;
+}
+
+function connector(from, to, offset, originY, sameNode) {
+  const y = originY ?? from.y + Math.min(from.height - 2, from.height / 2 + offset);
+  const targetY = to.y + Math.min(to.height - 2, to.height / 2 + offset);
+  if (sameNode) {
+    const x = from.x + from.width + 1;
     const rail = x + 42 + offset;
-    return `M ${x} ${y} C ${rail} ${y - 30}, ${rail} ${y + 59}, ${x} ${y + 32}`;
+    const endY = Math.abs(y - targetY) < 14 ? Math.min(y + 32, from.y + from.height - 2) : targetY;
+    return { x, y, d: `M ${x} ${y} C ${rail} ${y - 30}, ${rail} ${endY + 30}, ${x} ${endY}` };
   }
   if (from.x === to.x) {
-    const x = from.x + 191;
-    const rail = x + 30 + offset;
-    return `M ${x} ${y} C ${rail} ${y}, ${rail} ${targetY}, ${x} ${targetY}`;
+    const x = from.x + from.width + 1;
+    const targetX = to.x + to.width + 1;
+    const rail = Math.max(x, targetX) + 30 + offset;
+    return { x, y, d: `M ${x} ${y} C ${rail} ${y}, ${rail} ${targetY}, ${targetX} ${targetY}` };
   }
   const leftToRight = from.x < to.x;
-  const x = from.x + (leftToRight ? 191 : -1);
-  const targetX = to.x + (leftToRight ? -1 : 191);
+  const x = from.x + (leftToRight ? from.width + 1 : -1);
+  const targetX = to.x + (leftToRight ? -1 : to.width + 1);
   const bend = Math.min(104, Math.abs(targetX - x) * .6) * (leftToRight ? 1 : -1);
-  return `M ${x} ${y} C ${x + bend} ${y}, ${targetX - bend} ${targetY}, ${targetX} ${targetY}`;
+  return { x, y, d: `M ${x} ${y} C ${x + bend} ${y}, ${targetX - bend} ${targetY}, ${targetX} ${targetY}` };
 }
 
 export function connectGraph(viewport, onSelect) {
   const stage = viewport.querySelector('#graph-stage');
   const cards = stage.querySelector('#cards');
   const connections = stage.querySelector('#connections');
+  const origins = stage.querySelector('#connection-origins');
   const segments = connections.querySelector('g');
   const buttons = new Map();
   const collapsed = new Set();
@@ -103,27 +112,57 @@ export function connectGraph(viewport, onSelect) {
     }
   });
 
+  function bounds(id) {
+    const position = layout.positions.get(id);
+    const card = buttons.get(id);
+    if (position && card) return {
+      ...position, width: card.button.offsetWidth, height: card.button.offsetHeight,
+      picture: card.button.dataset.frame === 'true' ? card.picture : undefined
+    };
+  }
+
+  function svg(tag, attributes) {
+    const element = document.createElementNS(connections.namespaceURI, tag);
+    for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
+    return element;
+  }
+
   function drawConnections() {
     const drawn = [];
+    const leaders = [];
     const counts = new Map();
     if (selected && layout) for (const edge of graph.edges) {
-      if (edge.source !== selected && edge.target !== selected) continue;
-      const from = layout.positions.get(edge.source);
-      const to = layout.positions.get(edge.target);
+      const target = connectionTarget(edge);
+      if (!target || edge.source !== selected && target !== selected) continue;
+      const from = bounds(edge.source);
+      const to = bounds(target);
       if (!from || !to) continue;
-      const pair = [edge.source, edge.target].sort().join('\n');
+      const pair = [edge.source, target].sort().join('\n');
       const count = counts.get(pair) ?? 0;
       counts.set(pair, count + 1);
-      const status = edge.evidence.status;
-      const path = document.createElementNS(connections.namespaceURI, 'path');
-      path.dataset.edgeId = edge.id;
-      path.dataset.status = status;
-      path.setAttribute('d', connector(from, to, (count % 9) * 5));
-      path.setAttribute('marker-end', 'url(#arrow-' + status + ')');
-      drawn.push(path);
+      const { status, origin, actionFailure, transitionObserved, targetReady } = edge.evidence;
+      const appearance = actionFailure || transitionObserved && !targetReady ? 'unverified' : status;
+      const point = origin && from.picture && {
+        x: from.x + from.picture.offsetLeft + origin.x * from.picture.offsetWidth,
+        y: from.y + from.picture.offsetTop + origin.y * from.picture.offsetHeight
+      };
+      const port = connector(from, to, (count % 9) * 5, point?.y, edge.source === target);
+      drawn.push(svg('path', {
+        'data-edge-id': edge.id, 'data-target': target, 'data-status': appearance,
+        'data-origin': point ? 'control' : 'screen',
+        d: port.d, 'marker-end': 'url(#arrow-' + appearance + ')'
+      }));
+      if (point) {
+        const mark = svg('g', { 'data-edge-id': edge.id, 'data-status': appearance });
+        mark.append(svg('line', { x1: point.x, y1: point.y, x2: port.x, y2: port.y }),
+          svg('circle', { cx: point.x, cy: point.y, r: 4.2 }));
+        leaders.push(mark);
+      }
     }
     segments.replaceChildren(...drawn);
+    origins.replaceChildren(...leaders);
     connections.toggleAttribute('hidden', !drawn.length);
+    origins.toggleAttribute('hidden', !leaders.length);
   }
 
   function update(next) {
@@ -135,8 +174,10 @@ export function connectGraph(viewport, onSelect) {
       const focused = document.activeElement?.dataset?.node;
       stage.style.width = layout.width + 'px';
       stage.style.height = layout.height + 'px';
-      connections.setAttribute('width', String(layout.width));
-      connections.setAttribute('height', String(layout.height));
+      for (const layer of [connections, origins]) {
+        layer.setAttribute('width', String(layout.width));
+        layer.setAttribute('height', String(layout.height));
+      }
       cards.replaceChildren();
       buttons.clear();
       for (const group of layout.labels) {
@@ -182,6 +223,7 @@ export function connectGraph(viewport, onSelect) {
       button.setAttribute('aria-pressed', String(selected === node.id));
       const report = node.capture;
       const valid = node.screenshot?.startsWith('data:image/png;base64,');
+      button.dataset.frame = String(Boolean(valid));
       const status = captureLabels[report?.outcome];
       const destination = report?.transition && report.actualPath;
       button.title = [status, report?.state, destination, report?.reason.message].filter(Boolean).join(' · ');
@@ -199,6 +241,7 @@ export function connectGraph(viewport, onSelect) {
         const summary = report?.transition === 'verified' ? report.actualPath : report?.reason.message;
         picture.textContent = summary ?? 'Ожидает проверки';
       }
+      caption.hidden = Boolean(valid && !report?.state);
       caption.textContent = [transitionLabels[report?.transition] ?? status ?? 'Из кода',
         report?.state, report?.transition !== 'verified' && destination].filter(Boolean).join(' · ');
     }

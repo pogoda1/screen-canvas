@@ -17,6 +17,12 @@ export interface Evidence {
   expectedPath?: string;
   actualPath?: string;
   requests?: Observation[];
+  transitionObserved?: boolean;
+  targetReady?: boolean;
+  targetReason?: string;
+  actionFailure?: Diagnostic;
+  /** Normalized coordinates on the verified source frame. */
+  origin?: { x: number; y: number };
 }
 export interface CaptureRule {
   source: string;

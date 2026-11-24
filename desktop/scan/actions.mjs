@@ -3,9 +3,15 @@ import { routeMatches } from '../../core/discovery/actions.mjs';
 
 const buttons = 'button, [role=button], input[type=submit]';
 
-export async function runAction(capture, edge, target, signal) {
+export async function runAction(capture, edge, target, signal, { observeControl, beforeInput } = {}) {
   if (edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect')) return;
   const { contents } = capture;
+  let started = false;
+  const begin = async () => {
+    if (started) return;
+    started = true;
+    await beforeInput?.();
+  };
   if (!edge.steps) {
     const candidates = await contents.executeJavaScript(`Array.from(document.querySelectorAll(${
       JSON.stringify(edge.action === 'link' ? 'a[href]' : buttons)
@@ -22,16 +28,17 @@ export async function runAction(capture, edge, target, signal) {
     if (!match) throw new Error('No unique visible control matches this edge');
     const query = 'Array.from(document.querySelectorAll(' +
       JSON.stringify(edge.action === 'link' ? 'a[href]' : buttons) + '))[' + match.index + ']';
-    return click(contents, query);
+    return click(contents, query, begin, observeControl);
   }
   if (!Array.isArray(edge.steps) || edge.steps.length > 12) throw new Error('Invalid action steps');
-  for (const step of edge.steps) {
+  const interactive = edge.steps.filter(step => step.type !== 'redirect');
+  for (const step of interactive) {
     signal.throwIfAborted();
-    if (step.type === 'redirect') continue;
     if (typeof step.selector !== 'string' || step.selector.length > 512) throw new Error('Invalid local action selector');
     const query = 'document.querySelector(' + JSON.stringify(step.selector) + ')';
-    if (step.type === 'click') await click(contents, query);
+    if (step.type === 'click') await click(contents, query, begin, interactive.length === 1 ? observeControl : undefined);
     else if (step.type === 'fill' && typeof step.value === 'string' && step.value.length <= 500) {
+      await begin();
       await contents.executeJavaScript(`(() => {
         const input = ${query};
         if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) throw Error('Text input is missing');
@@ -40,6 +47,7 @@ export async function runAction(capture, edge, target, signal) {
         input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
       })()`);
     } else if (step.type === 'press' && ['Tab', 'Enter', 'Space', 'Escape', 'ArrowDown', 'ArrowUp'].includes(step.key)) {
+      await begin();
       await contents.executeJavaScript(query + '?.focus()');
       contents.sendInputEvent({ type: 'keyDown', keyCode: step.key });
       if (step.key === 'Enter') contents.sendInputEvent({ type: 'char', keyCode: '\r' });
@@ -49,25 +57,39 @@ export async function runAction(capture, edge, target, signal) {
   }
 }
 
-async function click(contents, query) {
-  const point = await contents.executeJavaScript(`(async () => {
+async function click(contents, query, begin, observeControl) {
+  const locate = scroll => contents.executeJavaScript(`(async () => {
     const target = ${query};
     if (!(target instanceof HTMLElement) || target.matches(':disabled,[aria-disabled="true"]') ||
         target.closest('[inert],[hidden],[aria-hidden="true"]')) return null;
-    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    if (${scroll}) target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     // Let Chromium publish a frame with the updated hit-test regions before
     // sending input to an offscreen surface.
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     for (const box of target.getClientRects()) {
       const x = box.left + box.width / 2, y = box.top + box.height / 2;
-      if (target.contains(document.elementFromPoint(x, y))) return { x, y };
+      if (target.contains(document.elementFromPoint(x, y))) {
+        const visible = target.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+        return { x, y, box: { x: box.x, y: box.y, width: box.width, height: box.height },
+          visible };
+      }
     }
     return null;
   })()`);
-  if (!point) throw new Error('The action control is unavailable');
+  let hit = await locate(false) ?? await locate(true);
+  if (!hit) throw new Error('The action control is unavailable');
+  if (observeControl && hit.visible) {
+    const accept = await observeControl(hit);
+    const current = await locate(false);
+    if (!current) throw new Error('The action control is unavailable');
+    if (current.visible && JSON.stringify(hit.box) === JSON.stringify(current.box)) accept?.();
+    hit = current;
+  }
+  const point = { x: hit.x, y: hit.y };
   // Send pointer events to this capture's Chromium target. The renderer picks
   // the actual hit element and dispatches the event through its ancestor path.
   const debuggerSession = contents.debugger;
+  await begin();
   debuggerSession.attach('1.3');
   try {
     const dispatch = (type, fields) => debuggerSession.sendCommand('Input.dispatchMouseEvent', { type, ...point, ...fields });

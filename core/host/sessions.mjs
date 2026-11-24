@@ -55,7 +55,7 @@ export async function openSession({ project, host, generation, scenario, timeout
     }
     if ((project.adapter.apiPrefixes ?? ['/api']).some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'))) {
       const sequence = ++serial;
-      const record = { method: request.method, path: pathname, status: 0 };
+      const record = { sequence, method: request.method, path: pathname, status: 0 };
       if (requests.length >= 250) requests.shift();
       requests.push(record);
       if (loading) await new Promise(resolve => {

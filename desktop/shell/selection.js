@@ -1,4 +1,4 @@
-import { captureLabels, evidenceLabels, transitionLabels } from './graph.js';
+import { captureLabels, connectionTarget, evidenceLabels, transitionLabels } from './graph.js';
 
 const phases = {
   navigation: 'Документ',
@@ -70,7 +70,9 @@ function directionGroup(title, edges, neighborId, neighbors) {
     if (evidence.status === 'confirmed') for (const value of edge.displayValues ?? []) {
       item.append(paragraph('Ответ · ' + JSON.stringify(value)));
     }
-    if (edge.expectedPath) item.append(paragraph('Ожидаемый путь · ' + edge.expectedPath));
+    const target = connectionTarget(edge);
+    const expectedPath = edge.expectedPath ?? (target && target !== edge.target ? neighbors.get(edge.target)?.path : undefined);
+    if (expectedPath) item.append(paragraph('Ожидаемый путь · ' + expectedPath));
     if (evidence.actualPath) item.append(paragraph('Наблюдаемый путь · ' + evidence.actualPath));
     const status = paragraph(evidenceLabels[evidence.status], 'edge-status');
     status.dataset.status = evidence.status;
@@ -78,6 +80,12 @@ function directionGroup(title, edges, neighborId, neighbors) {
     if (evidence.transitionObserved) {
       item.append(paragraph(evidence.targetReady ? 'Цель перехода готова' : 'Готовность цели перехода не подтверждена'));
       if (evidence.targetReason) item.append(paragraph(evidence.targetReason, 'diagnostic'));
+    }
+    const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' : 'Источник стрелки · Экран');
+    if (source) item.append(paragraph(source));
+    if (evidence.actionFailure) {
+      const outcome = evidence.transitionObserved ? 'Переход наблюдался при ошибке' : 'Ошибка без перехода';
+      item.append(paragraph(outcome + ' · ' + evidence.actionFailure.message, 'diagnostic'));
     }
     if (evidence.reason) item.append(paragraph(evidence.reason, 'edge-reason'));
     list.append(item);
@@ -94,8 +102,8 @@ function showEdges(details, edges, graph, id) {
   const heading = document.createElement('h3');
   heading.textContent = 'Связи экрана';
   content.append(heading);
-  const incoming = directionGroup('Входящие', edges.filter(edge => edge.target === id), edge => edge.source, neighbors);
-  const outgoing = directionGroup('Исходящие', edges.filter(edge => edge.source === id), edge => edge.target, neighbors);
+  const incoming = directionGroup('Входящие', edges.filter(edge => edge.target === id || connectionTarget(edge) === id), edge => edge.source, neighbors);
+  const outgoing = directionGroup('Исходящие', edges.filter(edge => edge.source === id), edge => connectionTarget(edge) ?? edge.target, neighbors);
   if (incoming) content.append(incoming);
   if (outgoing) content.append(outgoing);
   details.append(content);
@@ -104,7 +112,7 @@ function showEdges(details, edges, graph, id) {
 let lastDetails;
 export function showNode(details, graph, id) {
   const node = graph?.nodes.find(candidate => candidate.id === id);
-  const edges = graph?.edges.filter(edge => edge.source === id || edge.target === id) ?? [];
+  const edges = graph?.edges.filter(edge => edge.source === id || edge.target === id || connectionTarget(edge) === id) ?? [];
   const fingerprint = JSON.stringify([id, node?.capture, node?.diagnostics, node?.requests, edges]);
   if (fingerprint === lastDetails && details.firstChild) return;
   lastDetails = fingerprint;
