@@ -45,17 +45,23 @@
   function inspectContent(index) {
     const body = document.body;
     if (!body) return { content: false, loading: false, mounted: false };
-    const busy = body.querySelectorAll('[data-screen-canvas-loading],[aria-busy="true"]');
-    const statuses = body.querySelectorAll('[role="status"],[role="progressbar"]');
-    let loading = [...busy].some(visible) || [...statuses].some(element =>
-      visible(element) && loadingLabel(element.getAttribute('aria-label') ?? element.textContent));
+    const main = [...body.querySelectorAll('main,[role="main"]')].find(visible) ?? body;
+    const explicitLoading = [...body.querySelectorAll('[data-screen-canvas-loading]')].some(visible);
+    const indicator = '[aria-busy="true"],[role="status"],[role="progressbar"]';
+    const isLoading = element => element.matches('[aria-busy="true"]') ||
+      loadingLabel(element.getAttribute('aria-label') ?? element.textContent);
+    let busy = Boolean(main.closest('[aria-busy="true"]')) ||
+      [main, ...main.querySelectorAll(indicator)].some(element =>
+        element.matches(indicator) && visible(element) && isLoading(element));
     let content = false;
     let mounted = false;
     const observe = element => {
+      const region = element.closest(indicator);
+      if (region && isLoading(region) || element.closest('[aria-busy="true"]')) return;
       content = true;
       if (index && !mounted) mounted = belongsToIndex(element);
     };
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     while (walker.nextNode()) {
       const text = walker.currentNode;
@@ -64,13 +70,13 @@
           getComputedStyle(owner).visibility !== 'visible') continue;
       range.selectNodeContents(text);
       if (!range.getClientRects().length) continue;
-      if (loadingLabel(text.textContent) && loadingLabel(owner.textContent)) loading = true;
+      if (loadingLabel(text.textContent) && loadingLabel(owner.textContent)) busy = true;
       else observe(owner);
     }
-    for (const element of body.querySelectorAll('input:not([type="hidden"]),textarea,select,img,svg,canvas,video')) {
+    for (const element of main.querySelectorAll('input:not([type="hidden"]),textarea,select,img,svg,canvas,video')) {
       if (visible(element)) observe(element);
     }
-    return { content, loading, mounted };
+    return { content, loading: explicitLoading || (busy && !content), mounted };
   }
   const hook = async (name, input) => {
     let result = input;
