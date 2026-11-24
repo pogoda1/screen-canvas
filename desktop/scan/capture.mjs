@@ -61,10 +61,10 @@ export async function createCapture(worker, nodeId, role, signal) {
     frameKey: createHash('sha256').update(JSON.stringify(preview.scenario)).digest('hex'),
     initialPath: new URL(preview.path, preview.origin).pathname,
     cursor: () => worker.call('cursor', { id: preview.id }),
-    verify: (after, edge) => worker.call('verify', {
+    verify: (after, edge, timeout = 10_000) => withBudget(worker.call('verify', {
       id: preview.id, after, ...(edge.expectRequests ? { requests: edge.expectRequests } : {}),
       ...(edge.expectSnapshot ? { snapshot: edge.expectSnapshot } : {})
-    }),
+    }, timeout), signal, timeout),
     requests: () => worker.call('requests', { id: preview.id }, 1000).catch(() => [])
   });
 }

@@ -23,6 +23,38 @@ async function settleRequests(capture, signal) {
   return { records, waited };
 }
 
+function sameScreenIdentity(left, right) {
+  return left.url === right.url && left.documentVersion === right.documentVersion &&
+    left.navigationVersion === right.navigationVersion && left.id === right.id &&
+    left.status?.documentId === right.status?.documentId;
+}
+
+async function verifySnapshotEffect(capture, graph, signal, after, expectSnapshot, original, deadline) {
+  let observed = original;
+  let reason = 'The expected observed UI answer or role did not match';
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    observed = await refreshScreen(capture, graph, signal, false);
+    if (!sameScreenIdentity(original, observed) || observed.status?.failure) break;
+    const budget = deadline - Date.now();
+    if (observed.ready && budget > 0) {
+      reason = await capture.verify(after, { expectSnapshot }, budget);
+      if (!reason) {
+        observed = await refreshScreen(capture, graph, signal, false);
+        if (observed.ready && sameScreenIdentity(original, observed) && Date.now() <= deadline) {
+          signal.throwIfAborted();
+          return { observed, reason };
+        }
+        reason = 'The UI effect could not be verified on the same ready screen within the observation budget';
+        if (!sameScreenIdentity(original, observed)) break;
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await setTimeout(Math.min(40, remaining), undefined, { signal });
+  }
+  return { observed, reason };
+}
+
 export async function crawlGraph(worker, graph, signal, update) {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
   const frames = new Map();
@@ -138,7 +170,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         await runAction(capture, edge, target, jobSignal, {
           observeControl,
           beforeInput: async () => {
-            if (self && edge.expectSnapshot && !edge.expectRequests?.length) {
+            if (self && edge.expectSnapshot) {
               differentSnapshot = Boolean(await capture.verify(0, { expectSnapshot: edge.expectSnapshot }));
             }
             after = await capture.cursor();
@@ -146,6 +178,7 @@ export async function crawlGraph(worker, graph, signal, update) {
           }
         });
       }
+      const deadline = Date.now() + timeout;
       const afterNavigation = self && !edge.expectRequests?.length && !differentSnapshot ? startedNavigation : undefined;
       const expect = { expected: edge.target, from: edge.source, timeout, afterNavigation };
       observed = await awaitScreen(capture, graph, jobSignal, { ...expect, waitForNavigation: redirects });
@@ -157,9 +190,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         records = settled.records;
         if (jobSignal.aborted) break;
         const current = await refreshScreen(capture, graph, jobSignal, settled.waited);
-        changed = current.url !== observed.url || current.documentVersion !== observed.documentVersion ||
-          current.navigationVersion !== observed.navigationVersion || current.id !== observed.id ||
-          current.status?.documentId !== observed.status?.documentId;
+        changed = !sameScreenIdentity(current, observed);
         observed = changed && !current.ready && !current.status?.failure ?
           await awaitScreen(capture, graph, jobSignal, expect) : current;
       } while (changed && !jobSignal.aborted);
@@ -172,7 +203,12 @@ export async function crawlGraph(worker, graph, signal, update) {
       if (edge.expectedPath && observed.pathname && !routeMatches(edge.expectedPath, observed.pathname)) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + observed.pathname;
       } else if (observed.ready && observed.id === edge.target && edge.expectSnapshot && !reason && !jobSignal.aborted) {
-        reason = await capture.verify(after ?? 0, { expectSnapshot: edge.expectSnapshot });
+        if (self && differentSnapshot) {
+          ({ observed, reason } = await verifySnapshotEffect(capture, graph, jobSignal, after ?? 0,
+            edge.expectSnapshot, observed, deadline));
+        } else {
+          reason = await capture.verify(after ?? 0, { expectSnapshot: edge.expectSnapshot });
+        }
         snapshotVerified = !reason;
       }
       if (edge.action === 'redirect' && !edge.direct && observed.id === edge.target && !reason) {
