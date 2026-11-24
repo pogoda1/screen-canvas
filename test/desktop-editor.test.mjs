@@ -102,3 +102,57 @@ test('editing survives a rapid Save and restores UI draft with the same server v
   assert.deepEqual(await guestEval(second.electron,
     "[document.querySelector('#level').value, document.querySelector('#server').textContent]"), ['C1_native', 'C1']);
 });
+
+test('a diagnostic card keeps a live form editable and saves and reopens its visible value', { timeout: 45_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      browser: '/src/bindings.js',
+      schema: () => ({ kind:'object', sources:[], fields: {
+        title:{kind:'string',sources:[],binding:{kind:'state',key:'title'}}
+      } }),
+      scenario: () => ({ data:{title:'Original'} })
+    };`,
+    'src/bindings.js': `
+      import { registerBrowserBindings } from 'react-screen-canvas/browser';
+      const field = () => document.querySelector('#live-title');
+      registerBrowserBindings({
+        ready: () => Boolean(field()), captureReady: () => false,
+        apply: scenario => { field().value = scenario.data.title; },
+        read: scenario => ({...scenario, data:{title:field().value}})
+      });
+    `,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route} from 'react-router-dom';
+      import {getInitialScenario} from 'react-screen-canvas/browser';
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/" element={<main><h1>Editable form</h1>
+          <label>Title<input id="live-title" defaultValue={getInitialScenario()?.data.title}/></label>
+        </main>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const first = await launchCanvas(t);
+  await pick(first.electron, first.shell, folder);
+  const card = first.shell.getByRole('button', { name: '/', exact: true });
+  await card.getByText('Снимок недоступен').waitFor();
+  assert.equal(await card.locator('img').count(), 0);
+  await card.click();
+  await waitGuest(first.electron, "document.querySelector('#live-title')?.value === 'Original'");
+  const value = 'Visible edit 716';
+  await first.shell.getByRole('textbox', { name: 'title', exact: true }).fill(value);
+  const visible = "document.querySelector('#live-title')?.value === " + JSON.stringify(value);
+  await waitGuest(first.electron, visible);
+  await first.shell.getByRole('textbox', { name: 'Имя варианта' }).fill('Diagnostic variant');
+  await first.shell.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await first.shell.getByText('Вариант сохранён').waitFor();
+  await first.electron.close();
+
+  const second = await launchCanvas(t);
+  await pick(second.electron, second.shell, folder);
+  await second.shell.getByRole('button', { name: '/', exact: true }).click();
+  await second.shell.getByRole('button', { name: 'Diagnostic variant', exact: true }).click();
+  await waitGuest(second.electron, visible);
+  assert.equal(await second.shell.getByRole('textbox', { name: 'title', exact: true }).inputValue(), value);
+});

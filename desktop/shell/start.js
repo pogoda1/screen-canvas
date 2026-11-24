@@ -36,6 +36,8 @@ let editor;
 let activePreview;
 let lastDescription;
 let rebuilding;
+let rebuildSelection;
+let diagnosticSource;
 const refreshBounds = connectPreviewSlot(api, byId('preview-slot'), () => state?.generation);
 const map = connectGraph(byId('graph'), open);
 connectDivider(divider, workbench, refreshBounds);
@@ -51,6 +53,8 @@ async function open(id, variantId) {
   editor = undefined;
   activePreview = undefined;
   selected = id;
+  const card = state.graph.nodes.find(node => node.id === id);
+  diagnosticSource = card?.capture?.transition ? id : undefined;
   map.select(id);
   showNode(details, state.graph, id);
   workbench.classList.add('has-preview');
@@ -76,6 +80,7 @@ function clearSelection() {
   editor = undefined;
   activePreview = undefined;
   selected = undefined;
+  diagnosticSource = undefined;
   map.select(undefined);
   details.replaceChildren();
   live.hidden = true;
@@ -89,6 +94,7 @@ close.addEventListener('click', () => perform(() => api.close(state.generation))
 cancel.addEventListener('click', () => perform(() => api.cancelScan(state.generation)));
 rebuild.addEventListener('click', () => perform(async () => {
   rebuilding = state.generation;
+  rebuildSelection = diagnosticSource ?? selected;
   byId('graph').inert = true;
   rebuild.disabled = true;
   clearSelection();
@@ -97,6 +103,7 @@ rebuild.addEventListener('click', () => perform(async () => {
     byId('graph').inert = false;
     rebuild.disabled = false;
     rebuilding = undefined;
+    rebuildSelection = undefined;
     throw error;
   }
 }));
@@ -135,10 +142,15 @@ async function refresh() {
     if (description && description.id === activePreview && fingerprint !== lastDescription) {
       lastDescription = fingerprint;
       selected = description.nodeId;
-      map.select(selected);
+      map.select(diagnosticSource ?? selected);
       editor?.follow(description);
     }
-    if (selected) showNode(details, next.graph, selected);
+    if (selected) showNode(details, next.graph, diagnosticSource ?? selected);
+    if (rebuilding === undefined && rebuildSelection) {
+      const id = rebuildSelection;
+      rebuildSelection = undefined;
+      if (next.graph?.nodes.some(node => node.id === id)) void open(id);
+    }
     refreshBounds();
   } catch (error) {
     status.textContent = error.message;

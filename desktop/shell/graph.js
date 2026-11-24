@@ -6,6 +6,20 @@ export const evidenceLabels = {
   unverified: 'Проверить не удалось'
 };
 
+export const captureLabels = {
+  captured: 'Снимок готов',
+  'special-state': 'Отдельное состояние',
+  transition: 'Переход подтверждён',
+  'different-screen': 'Другой экран',
+  blocked: 'Снимок недоступен'
+};
+
+export const transitionLabels = {
+  verified: 'Переход подтверждён',
+  'observed-url': 'Путь наблюдался, цель не готова',
+  unexpected: 'Незаявленное назначение'
+};
+
 export function connectGraph(viewport, onSelect) {
   const stage = viewport.querySelector('#graph-stage');
   const ink = stage.querySelector('canvas');
@@ -174,7 +188,12 @@ export function connectGraph(viewport, onSelect) {
       if (!card) continue;
       const { button, picture, caption } = card;
       button.setAttribute('aria-pressed', String(selected === node.id));
+      const report = node.capture;
       const valid = node.screenshot?.startsWith('data:image/png;base64,');
+      const status = captureLabels[report?.outcome];
+      const destination = report?.transition && report.actualPath;
+      button.title = [status, report?.state, destination, report?.reason.message].filter(Boolean).join(' · ');
+      button.setAttribute('aria-description', button.title);
       if (valid && picture.dataset.src !== node.screenshot) {
         picture.dataset.src = node.screenshot;
         const img = document.createElement('img');
@@ -185,9 +204,11 @@ export function connectGraph(viewport, onSelect) {
       }
       if (!valid) {
         picture.dataset.src = '';
-        picture.textContent = node.diagnostics?.at(-1)?.message ?? 'Ожидает проверки';
+        const summary = report?.transition === 'verified' ? report.actualPath : report?.reason.message;
+        picture.textContent = summary ?? 'Ожидает проверки';
       }
-      caption.textContent = node.screenshot ? 'Снимок готов' : node.diagnostics?.length ? 'Есть диагностика' : 'Из кода';
+      caption.textContent = [transitionLabels[report?.transition] ?? status ?? 'Из кода',
+        report?.state, report?.transition !== 'verified' && destination].filter(Boolean).join(' · ');
     }
     draw();
   }

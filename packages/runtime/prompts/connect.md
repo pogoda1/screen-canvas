@@ -23,7 +23,17 @@ Create `screen-canvas.config.mjs` and export `defineAdapter({...})` from the SDK
   must be available before the React entry point. Identify the current screen,
   wait for real readiness, apply data to the host, and read the visible state.
   When a form submits asynchronously, read after it settles and keep unfinished
-  UI input separately in `draft`.
+  UI input separately in `draft`. Optionally register `captureReady` for static
+  thumbnails. For example, return false while the application's startup cover
+  hides an otherwise working form. Keep `ready` tied to live read/apply so a
+  diagnostic card can still open, edit and save the form. Hooks can be async,
+  but the scanner gives them a limited time.
+- Declare known conditional destinations in `captureRules`. Each rule has
+  `source`, optional scenario `role`, `target`, and an exact local `path`
+  such as `/documents/terms`. A target state node needs a matching browser
+  identity. A rule with the same source and target may specify a `state` caption
+  for an intentional placeholder or error screen. Only label the state if your
+  capture hook verifies that its visible content is the intended state.
 - Add state nodes with stable IDs (for example, `route:/settings#theme`) and
   declarative actions with source, target, condition and an optional test role.
   Supply stable selectors for the real controls. Prefer the project's existing

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { launchCanvas, pick, waitGuest } from './helpers/electron.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
@@ -347,4 +349,33 @@ test('Chromium reports expected destinations and request failures independently'
   assert.ok(byPath('/signin').screenshot);
   assert.equal(byPath('/signin').capture.outcome, 'captured');
   assert.deepEqual(byPath('/signin').requests, [{method:'GET',path:'/api/session',status:401}]);
+
+  for (const [pathname, cardText, liveContent] of [
+    ['/entry', 'Переход подтверждён', 'first'],
+    ['/blocked', 'GET /api/resource → 501', 'Loading…'],
+    ['/wrong', 'Незаявленное назначение', 'second'],
+    ['/signin', 'Снимок готов', 'Sign in'],
+    ['/result', 'Unverified result', 'Unverified result']
+  ]) {
+    const card = shell.getByRole('button', { name: pathname, exact: true });
+    await card.getByText(cardText, { exact: false }).waitFor();
+    await card.click();
+    await waitGuest(electron, `document.querySelector('main,h1')?.textContent.includes(${JSON.stringify(liveContent)})`);
+    const report = byPath(pathname).capture;
+    const details = shell.locator('#details .capture-details');
+    await details.getByText(report.reason.message, { exact: true }).waitFor();
+    await details.getByText('Наблюдалось · ' + report.actualNode + ' · ' + report.actualPath).waitFor();
+    assert.equal(await card.locator('img').count(), report.targetReady && !report.transition ? 1 : 0);
+  }
+
+  const filename = path.join(folder, 'src/main.jsx');
+  const source = await readFile(filename, 'utf8');
+  await writeFile(filename, source.replace('<h1>Unverified result</h1>', '<main aria-busy="true">Loading…</main>'));
+  await shell.getByRole('button', { name: 'Перестроить' }).click();
+  const rebuilt = shell.getByRole('button', { name: '/result', exact: true });
+  await rebuilt.getByText('The route still displays a loading screen').waitFor();
+  assert.equal(await rebuilt.getAttribute('aria-pressed'), 'true');
+  assert.equal(await rebuilt.locator('img').count(), 0);
+  assert.equal(await rebuilt.getByText('Unverified result').count(), 0);
+  await waitGuest(electron, "document.querySelector('main[aria-busy=true]')?.textContent === 'Loading…'");
 });

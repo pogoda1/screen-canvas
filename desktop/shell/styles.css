@@ -53,6 +53,8 @@ progress { width: 64px; height: 7px; accent-color: var(--mint); }
 #preview-slot { margin: .7rem; border: 1px solid var(--line); min-height: 0; background: #111820; }
 .inspector { background: var(--panel); border-left: 1px solid var(--line); padding: .8rem; overflow: auto; }
 #details h2 { margin: 0 0 .65rem; color: var(--mint); font: 14px var(--mono); overflow-wrap: anywhere; }
+.capture-details { margin-bottom: .7rem; font-size: .78rem; overflow-wrap: anywhere; }
+.capture-details p { margin-block: .25rem; }
 .diagnostic, #preview-error { font-size: .8rem; color: #efcfa9; overflow-wrap: anywhere; }
 .edge-details { margin: .6rem 0; padding: 0; list-style: none; }
 .edge-details li { padding: .4rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
