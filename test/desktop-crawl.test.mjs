@@ -369,7 +369,11 @@ test('Chromium reports expected destinations and request failures independently'
     ['/result', 'Unverified result', 'Unverified result']
   ]) {
     const card = shell.getByRole('button', { name: pathname, exact: true });
-    await card.getByText(cardText, { exact: false }).waitFor();
+    if (pathname === '/signin') {
+      await card.locator('img').waitFor();
+      assert.match(await card.getAttribute('aria-description'), /Снимок готов/);
+      assert.equal(await card.getByText(cardText, { exact: true }).isVisible(), false);
+    } else await card.getByText(cardText, { exact: false }).waitFor();
     await card.click();
     await waitGuest(electron, `document.querySelector('main,h1')?.textContent.includes(${JSON.stringify(liveContent)})`);
     const report = byPath(pathname).capture;
