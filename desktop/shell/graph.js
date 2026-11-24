@@ -20,10 +20,19 @@ export const transitionLabels = {
   unexpected: 'Незаявленное назначение'
 };
 
-export function connectionTarget(edge) {
+export function observedTarget(edge) {
   const evidence = edge.evidence;
   if (evidence.status === 'static' || evidence.status === 'confirmed') return edge.target;
   if (evidence.transitionObserved && (edge.action !== 'redirect' || edge.direct)) return evidence.actualTarget;
+}
+
+export function connectionTarget(edge, nodes) {
+  const target = observedTarget(edge);
+  const node = nodes.get(target);
+  if (!node) return;
+  const path = edge.evidence.actualPath ?? edge.expectedPath;
+  if (node.screenshot && (!path || path !== node.capture?.actualPath)) return;
+  return target;
 }
 
 function connector(from, to, offset, originY, sameNode) {
@@ -131,8 +140,9 @@ export function connectGraph(viewport, onSelect) {
     const drawn = [];
     const leaders = [];
     const counts = new Map();
+    const nodes = new Map(graph?.nodes.map(node => [node.id, node]));
     if (selected && layout) for (const edge of graph.edges) {
-      const target = connectionTarget(edge);
+      const target = connectionTarget(edge, nodes);
       if (!target || edge.source !== selected && target !== selected) continue;
       const from = bounds(edge.source);
       const to = bounds(target);

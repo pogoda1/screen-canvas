@@ -255,3 +255,39 @@ test('proportional frames anchor observed clicks and separate failed requests fr
   assert.equal(await line('automatic').getAttribute('data-origin'), 'screen');
   assert.equal(await line('wrong').count(), 0);
 });
+
+
+test('two concrete destinations of one route never point to the wrong frame', { timeout: 30_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      scenario(node) { return node.id === 'route:/doc/:kind' ? {params:{kind:'offer'}} : {}; }
+    };`,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Navigate, Routes, Route, useParams} from 'react-router-dom';
+      function Document() { return <h1>{useParams().kind}</h1>; }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/first" element={<Navigate to="/doc/offer" replace/>}/>
+        <Route path="/second" element={<Navigate to="/doc/privacy" replace/>}/>
+        <Route path="/doc/:kind" element={<Document/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell);
+  const document = graph.nodes.find(node => node.id === 'route:/doc/:kind');
+  assert.equal(document.capture.actualPath, '/doc/offer');
+  assert.ok(document.screenshot);
+  const target = shell.locator('#connections path[data-target="route:/doc/:kind"]');
+  await shell.getByRole('button', { name: '/second', exact: true }).click();
+  await waitGuest(electron, "location.pathname === '/doc/privacy' && document.querySelector('h1')?.innerText === 'privacy'");
+  await shell.locator('.edge-details').getByText('Наблюдаемый путь · /doc/privacy', { exact: true }).waitFor();
+  await shell.getByText('На карте сохранён другой путь · /doc/offer', { exact: true }).waitFor();
+  assert.equal(await target.count(), 0);
+  await shell.getByRole('button', { name: '/first', exact: true }).click();
+  await waitGuest(electron, "location.pathname === '/doc/offer' && document.querySelector('h1')?.innerText === 'offer'");
+  await target.waitFor();
+  assert.equal(await target.count(), 1);
+});

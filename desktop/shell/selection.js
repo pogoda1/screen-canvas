@@ -1,4 +1,4 @@
-import { captureLabels, connectionTarget, evidenceLabels, transitionLabels } from './graph.js';
+import { captureLabels, connectionTarget, evidenceLabels, observedTarget, transitionLabels } from './graph.js';
 
 const phases = {
   navigation: 'Документ',
@@ -70,7 +70,7 @@ function directionGroup(title, edges, neighborId, neighbors) {
     if (evidence.status === 'confirmed') for (const value of edge.displayValues ?? []) {
       item.append(paragraph('Ответ · ' + JSON.stringify(value)));
     }
-    const target = connectionTarget(edge);
+    const target = connectionTarget(edge, neighbors);
     const expectedPath = edge.expectedPath ?? (target && target !== edge.target ? neighbors.get(edge.target)?.path : undefined);
     if (expectedPath) item.append(paragraph('Ожидаемый путь · ' + expectedPath));
     if (evidence.actualPath) item.append(paragraph('Наблюдаемый путь · ' + evidence.actualPath));
@@ -89,6 +89,10 @@ function directionGroup(title, edges, neighborId, neighbors) {
     const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' :
       'Источник стрелки · Экран' + (originReasons[evidence.originReason] ? ' · ' + originReasons[evidence.originReason] : ''));
     if (source) item.append(paragraph(source));
+    const frame = neighbors.get(observedTarget(edge));
+    if (!target && frame?.screenshot && evidence.actualPath && evidence.actualPath !== frame.capture?.actualPath) {
+      item.append(paragraph('На карте сохранён другой путь · ' + frame.capture.actualPath, 'diagnostic'));
+    }
     if (evidence.actionEffect) item.append(paragraph('Эффект на текущем экране подтверждён'));
     if (evidence.requestCheck) item.append(paragraph(evidence.requestCheck === 'verified'
       ? 'Заявленный обмен подтверждён' : 'Заявленный обмен не подтверждён'));
@@ -115,8 +119,8 @@ function showEdges(details, edges, graph, id) {
   const heading = document.createElement('h3');
   heading.textContent = 'Связи экрана';
   content.append(heading);
-  const incoming = directionGroup('Входящие', edges.filter(edge => edge.target === id || connectionTarget(edge) === id), edge => edge.source, neighbors);
-  const outgoing = directionGroup('Исходящие', edges.filter(edge => edge.source === id), edge => connectionTarget(edge) ?? edge.target, neighbors);
+  const incoming = directionGroup('Входящие', edges.filter(edge => edge.target === id || observedTarget(edge) === id), edge => edge.source, neighbors);
+  const outgoing = directionGroup('Исходящие', edges.filter(edge => edge.source === id), edge => observedTarget(edge) ?? edge.target, neighbors);
   if (incoming) content.append(incoming);
   if (outgoing) content.append(outgoing);
   details.append(content);
@@ -125,7 +129,7 @@ function showEdges(details, edges, graph, id) {
 let lastDetails;
 export function showNode(details, graph, id) {
   const node = graph?.nodes.find(candidate => candidate.id === id);
-  const edges = graph?.edges.filter(edge => edge.source === id || edge.target === id || connectionTarget(edge) === id) ?? [];
+  const edges = graph?.edges.filter(edge => edge.source === id || edge.target === id || observedTarget(edge) === id) ?? [];
   const fingerprint = JSON.stringify([id, node?.capture, node?.diagnostics, node?.requests, edges]);
   if (fingerprint === lastDetails && details.firstChild) return;
   lastDetails = fingerprint;
