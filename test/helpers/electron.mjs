@@ -44,7 +44,7 @@ export async function waitGuest(electron, expression, timeout = 10_000) {
       const result = await guestEval(electron, expression);
       if (result) return result;
     } catch {}
-    await new Promise(resolve => setTimeout(resolve, 40));
+    await setTimeout(40);
   }
   throw new Error('Live preview did not satisfy ' + expression);
 }

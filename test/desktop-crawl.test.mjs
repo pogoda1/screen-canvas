@@ -140,6 +140,8 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.deepEqual(answer.requests.filter(request => request.method === 'POST'),
     [{ method: 'POST', path: '/api/answer', status: 200 }]);
   assert.ok(answer.requests.some(request => request.path === '/api/telemetry' && request.status === 501));
+  assert.equal(answer.targetReady, true);
+  assert.equal(answer.transitionObserved, true);
   assert.match(graph.edges.find(edge => edge.id === 'wrong-answer').evidence.reason, /submitted answer/);
   const wrongDestination = graph.edges.find(edge => edge.id === 'wrong-destination').evidence;
   assert.equal(wrongDestination.status, 'unverified');
@@ -423,4 +425,36 @@ test('a guarded automatic route keeps a member frame without confirming coincide
     assert.equal(evidence.actualPath, '/signin');
     assert.match(evidence.reason, /branch was not proved/);
   }
+});
+
+
+test('the transition panel preserves the actual path and blocked target independently', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Navigate, Routes, Route} from 'react-router-dom';
+      function Target() {
+        React.useEffect(() => { void fetch('/api/target'); }, []);
+        return <main><h1>Target shell</h1></main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/old" element={<Navigate to="/target" replace/>}/>
+        <Route path="/target" element={<Target/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell);
+  const edge = graph.edges.find(item => item.source === 'route:/old');
+  assert.equal(edge.evidence.actualPath, '/target');
+  assert.equal(edge.evidence.transitionObserved, true);
+  assert.equal(edge.evidence.targetReady, false);
+  assert.equal(edge.evidence.targetReason, 'GET /api/target → 501');
+  await shell.getByRole('button', { name: '/old', exact: true }).click();
+  await waitGuest(electron, "location.pathname === '/target'");
+  const row = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · /target' });
+  await row.getByText('Готовность цели перехода не подтверждена', { exact: true }).waitFor();
+  await row.getByText('GET /api/target → 501', { exact: true }).waitFor();
 });

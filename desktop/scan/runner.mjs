@@ -59,33 +59,36 @@ export async function crawlGraph(worker, graph, signal, update) {
 
   async function observeEdge(edge) {
     let capture;
-    let actual;
+    let observed;
     let actualPath;
+    let initialPath;
     let after = 0;
     let reason;
+    let redirects;
     try {
       const target = nodes.get(edge.target);
       if (!target) throw new Error('External destination');
       const timeout = edge.action === 'adapter' ? 6500 : 2600;
       const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(2 * timeout + 6500)]);
       capture = await createCapture(worker, edge.source, edge.role, jobSignal);
-      const redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
+      redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
+      initialPath = capture.initialPath;
       if (!redirects) {
         const source = await awaitScreen(capture, graph, jobSignal, { expected: edge.source, timeout, waitForNavigation: true });
         if (source.id !== edge.source || !source.ready) throw new Error(source.diagnostic?.message ?? 'The source screen was not observed');
+        initialPath = source.pathname;
         after = await capture.cursor();
         await runAction(capture, edge, target, jobSignal);
       }
-      const observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
-      actual = observed.id;
+      observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
       const url = capture.contents.isDestroyed() ? undefined : capture.contents.getURL();
       if (url) actualPath = new URL(url).pathname;
       if (edge.expectedPath && actualPath && !routeMatches(edge.expectedPath, actualPath)) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
-      } else if (observed.ready && actual === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
+      } else if (observed.ready && observed.id === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
         reason = await capture.verify(after, edge);
       }
-      if (edge.action === 'redirect' && !edge.direct && actual === edge.target && !reason) {
+      if (edge.action === 'redirect' && !edge.direct && observed.id === edge.target && !reason) {
         reason = 'The destination was observed, but the automatic branch was not proved';
       }
       if (!observed.ready) reason = observed.diagnostic?.message ?? 'Target did not become ready';
@@ -95,7 +98,15 @@ export async function crawlGraph(worker, graph, signal, update) {
         const requests = localRequests(await capture?.requests() ?? []);
         // The action is proved by its declared exchanges and observed target.
         // Other responses remain evidence and still block a source thumbnail.
-        edge.evidence = edgeEvidence(edge, actual, requests, reason, actualPath);
+        const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
+        if (actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source)) {
+          evidence.transitionObserved = true;
+          const failure = redirects && requests.find(request => request.status >= 500);
+          evidence.targetReady = Boolean(observed?.ready && !failure);
+          if (failure) evidence.targetReason = failure.method + ' ' + failure.path + ' → ' + failure.status;
+          else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
+        }
+        edge.evidence = evidence;
       }
       await capture?.close();
     }

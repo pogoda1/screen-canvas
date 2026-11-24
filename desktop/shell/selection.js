@@ -72,6 +72,10 @@ function directionGroup(title, edges, neighborId, neighbors) {
     const status = paragraph(evidenceLabels[evidence.status], 'edge-status');
     status.dataset.status = evidence.status;
     item.append(status);
+    if (evidence.transitionObserved) {
+      item.append(paragraph(evidence.targetReady ? 'Цель перехода готова' : 'Готовность цели перехода не подтверждена'));
+      if (evidence.targetReason) item.append(paragraph(evidence.targetReason, 'diagnostic'));
+    }
     if (evidence.reason) item.append(paragraph(evidence.reason, 'edge-reason'));
     list.append(item);
   }
