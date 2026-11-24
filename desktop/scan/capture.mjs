@@ -172,6 +172,10 @@ function sameScreen(expected, observation) {
     observation.status?.ready && observation.status?.captureReady && !blocked(observation, true);
 }
 
+export async function currentFrameMatches(capture, graph, signal, observed) {
+  return healthy(capture) && sameScreen(observed, await readScreen(capture, graph, signal, true, 350));
+}
+
 async function waitForPaint(contents, signal, budget) {
   // A pending OSR paint may still contain pre-ready pixels. First let the
   // document cross a rendering opportunity, then request an offscreen frame.

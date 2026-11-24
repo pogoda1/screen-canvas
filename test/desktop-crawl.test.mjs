@@ -561,3 +561,55 @@ test('rebuild keeps a declared redirect card selected once its new evidence arri
   assert.equal(await shell.getByRole('button', { name: '/legal', exact: true }).getAttribute('aria-pressed'), 'false');
   await shell.locator('#details').getByText('Наблюдалось · route:/legal · /legal', { exact: true }).waitFor();
 });
+
+
+test('a delayed successful response cannot publish a frame from the old document or route', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      createMocks: () => async () => {
+        await new Promise(resolve => setTimeout(resolve, 650));
+        return {status:200,body:{}};
+      }
+    };`,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route, useNavigate} from 'react-router-dom';
+      function Early({ reload }) {
+        const go = useNavigate();
+        const done = sessionStorage.getItem('new-document');
+        React.useEffect(() => {
+          if (done) return;
+          void fetch('/api/complete').then(() => {
+            if (!reload) go('/after');
+            else {
+              sessionStorage.setItem('new-document', 'yes');
+              location.reload();
+            }
+          });
+        }, [done, go, reload]);
+        return <main style={{background:done ? '#12b456' : '#ba2040',position:'fixed',inset:0}}>
+          <h1>{done ? 'Completed' : 'Old content'}</h1>
+        </main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/navigate" element={<Early reload={false}/>}/>
+        <Route path="/reload-after-http" element={<Early reload/>}/>
+        <Route path="/after" element={<h1>New route</h1>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell);
+  const changed = graph.nodes.find(node => node.path === '/navigate');
+  assert.equal(changed.capture.actualPath, '/after');
+  assert.equal(changed.capture.outcome, 'different-screen');
+  assert.equal(changed.screenshot, undefined);
+  const reloaded = graph.nodes.find(node => node.path === '/reload-after-http');
+  assert.equal(reloaded.capture.outcome, 'captured');
+  assert.ok(reloaded.requests.some(request => request.path === '/api/complete' && request.status === 200));
+  const green = await electron.evaluate(({ nativeImage }, url) =>
+    nativeImage.createFromDataURL(url).toBitmap()[1], reloaded.screenshot);
+  assert.equal(green, 180, 'The retained pixels came from the post-response document');
+});

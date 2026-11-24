@@ -1,16 +1,18 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
 import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
-import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen } from './capture.mjs';
+import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches } from './capture.mjs';
 import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
 
 async function settleRequests(capture, signal) {
-  if (!capture) return [];
+  if (!capture) return { records: [], waited: false };
   const deadline = Date.now() + 1500;
   let records = await capture.requests();
+  let waited = false;
   while (!signal.aborted && records.some(request => request.status === 0) &&
       Date.now() < deadline) {
+    waited = true;
     try { await setTimeout(50, undefined, { signal }); }
     catch { break; }
     const latest = await capture.requests();
@@ -18,7 +20,7 @@ async function settleRequests(capture, signal) {
     if (!latest.length) break;
     records = latest;
   }
-  return records;
+  return { records, waited };
 }
 
 export async function crawlGraph(worker, graph, signal, update) {
@@ -42,6 +44,7 @@ export async function crawlGraph(worker, graph, signal, update) {
     let capture;
     let observed;
     let screenshot;
+    let settled;
     let expected = { target: node.id, path: node.path, sourcePath: node.path };
     const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(CAPTURE_JOB_MS)]);
     try {
@@ -55,10 +58,19 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
       } else {
         ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
-        const redirect = expected.inferRedirect && observedRedirect(graph, node, observed);
-        if (redirect) expected = { ...redirect, sourcePath: capture.initialPath };
       }
+      settled = await settleRequests(capture, jobSignal);
+      while (screenshot && !jobSignal.aborted && !requestFailure(settled.records) &&
+          !settled.records.some(request => request.status === 0)) {
+        if (!settled.waited && await currentFrameMatches(capture, graph, jobSignal, observed)) break;
+        screenshot = undefined;
+        ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
+        settled = await settleRequests(capture, jobSignal);
+      }
+      const redirect = expected.inferRedirect && observedRedirect(graph, node, observed);
+      if (redirect) expected = { ...redirect, sourcePath: capture.initialPath };
     } catch {
+      screenshot = undefined;
       const url = capture && !capture.contents.isDestroyed() ? capture.contents.getURL() : undefined;
       observed = { pathname: url ? new URL(url).pathname : undefined, ready: false, diagnostic: {
         code: capture ? 'frame-not-observed' : 'navigation-timeout',
@@ -66,7 +78,7 @@ export async function crawlGraph(worker, graph, signal, update) {
       } };
     } finally {
       if (!signal.aborted) {
-        const records = await settleRequests(capture, jobSignal);
+        const { records } = settled ?? await settleRequests(capture, jobSignal);
         if (!signal.aborted) {
           node.requests = localRequests(records);
           if (jobSignal.aborted) screenshot = undefined;
@@ -119,7 +131,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
       }
       observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
-      records = await settleRequests(capture, jobSignal);
+      ({ records } = await settleRequests(capture, jobSignal));
       if (!jobSignal.aborted && observed.url !== capture.contents.getURL()) {
         observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout });
       }
