@@ -50,14 +50,18 @@ export async function runAction(capture, edge, target, signal) {
 }
 
 async function click(contents, query) {
-  const point = await contents.executeJavaScript(`(() => {
+  // Hidden capture windows cannot rely on native pointer delivery. Activate the
+  // same local control in its document after checking that it can receive a hit.
+  const clicked = await contents.executeJavaScript(`(() => {
     const target = ${query};
-    if (!target || target.disabled || !target.getClientRects().length) return null;
-    target.scrollIntoView({ block: 'center' });
-    const box = target.getBoundingClientRect();
-    return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
+    if (!(target instanceof HTMLElement) || target.matches(':disabled,[aria-disabled="true"]') ||
+        target.closest('[inert],[hidden],[aria-hidden="true"]')) return false;
+    target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    const reachable = Array.from(target.getClientRects()).some(box => target.contains(document.elementFromPoint(
+      box.left + box.width / 2, box.top + box.height / 2)));
+    if (!reachable) return false;
+    target.click();
+    return true;
   })()`);
-  if (!point) throw new Error('The action control is unavailable');
-  contents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
-  contents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+  if (!clicked) throw new Error('The action control is unavailable');
 }

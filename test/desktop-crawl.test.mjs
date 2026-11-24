@@ -19,6 +19,8 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         steps:[{type:'click',selector:'#answer'}] },
       { id:'wrong-destination', source:'route:/', target:'route:/next#index', label:'Wrong destination',
         expectedPath:'/next', steps:[{type:'click',selector:'#wrong-destination'}] },
+      { id:'covered', source:'route:/', target:'route:/next#index',
+        label:'Covered control', steps:[{type:'click',selector:'#covered'}] },
       { id:'one', source:'route:/', target:'route:/next#index', role:'guest', condition:'One',
         label:'Continue', steps:[{type:'click',selector:'#one'}] },
       { id:'two', source:'route:/', target:'route:/next#index', role:'member', condition:'Two',
@@ -36,6 +38,10 @@ test('Chromium captures node content and proves distinct observed actions', { ti
           <button id="one" onClick={() => navigate('/next')}>One</button>
           <button id="two" onClick={() => navigate('/next')}>Two</button>
           <button id="wrong-destination" onClick={() => setTimeout(() => navigate('/about'), 650)}>About</button>
+          <div style={{position:'relative',width:'max-content'}}>
+            <button id="covered" onClick={() => navigate('/next')}>Covered</button>
+            <span aria-hidden="true" style={{position:'absolute',inset:0}}/>
+          </div>
           <button id="answer" onClick={() => fetch('/api/answer', { method: 'POST', body: JSON.stringify({value:'observed'}) })
             .then(() => setTimeout(() => navigate('/next'), 650))}>Answer</button></main>;
       }
@@ -113,6 +119,9 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   const wrongDestination = graph.edges.find(edge => edge.id === 'wrong-destination').evidence;
   assert.equal(wrongDestination.status, 'unverified');
   assert.equal(wrongDestination.actualTarget, 'route:/about');
+  const covered = graph.edges.find(edge => edge.id === 'covered').evidence;
+  assert.equal(covered.status, 'unverified');
+  assert.match(covered.reason, /unavailable/);
   const wrongDoc = graph.edges.find(edge => edge.id === 'wrong-doc').evidence;
   assert.equal(wrongDoc.status, 'unverified');
   assert.equal(wrongDoc.actualPath, '/legal/privacy');
