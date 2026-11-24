@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, utilityProcess } from 'electron';
 import { assertJson } from '../core/contracts.mjs';
+import { crawlGraph } from './scan/runner.mjs';
 import { PreviewController } from './preview.mjs';
 import { ProjectController } from './project-controller.mjs';
 
@@ -23,9 +24,42 @@ function launchWorker(root) {
 }
 
 const preview = new PreviewController(() => window);
+let crawling;
 const controller = new ProjectController(launchWorker, state => {
-  if (state.status !== 'ready') void preview.close();
+  if (state.status !== 'ready') {
+    crawling?.abort.abort();
+    crawling = undefined;
+    void preview.close();
+  } else if (!crawling) startCrawl();
 });
+
+function startCrawl() {
+  const current = controller.state;
+  const graph = structuredClone(current.graph);
+  for (const node of graph.nodes) node.diagnostics ??= [];
+  const abort = new AbortController();
+  const operation = { abort };
+  crawling = operation;
+  operation.done = crawlGraph(controller.current, graph, abort.signal, (completed, total) => {
+    if (crawling === operation && !abort.signal.aborted) {
+      controller.state = { ...current, graph, progress: { completed, total } };
+    }
+  }).catch(error => {
+    if (crawling === operation && !abort.signal.aborted) {
+      controller.state = { ...controller.state, scanError: error.message };
+    }
+  });
+}
+
+async function rebuild(worker) {
+  const operation = crawling;
+  operation?.abort.abort();
+  await Promise.allSettled([operation?.done, preview.close()]);
+  const graph = await worker.call('scan', undefined, 25_000);
+  if (worker !== controller.current) throw new Error('Project generation expired');
+  crawling = undefined;
+  controller.publish('ready', { name: controller.state.name, graph });
+}
 
 function trusted(event) {
   const contents = window?.webContents;
@@ -65,6 +99,15 @@ ipcMain.handle(channel, async (event, payload) => {
     if (command === 'open') {
       if (!validId(args?.nodeId) || (args.variantId !== undefined && !validId(args.variantId))) throw new Error('Invalid screen');
       return { value: await preview.open(worker, args.nodeId, args.variantId) };
+    }
+    if (command === 'rebuild') {
+      await rebuild(worker);
+      return { value: null };
+    }
+    if (command === 'cancel-scan') {
+      crawling?.abort.abort();
+      controller.state = { ...controller.state, scanCancelled: true };
+      return { value: null };
     }
     if (command === 'variants') return { value: await worker.call('variants') };
     if (['patch', 'read', 'requests', 'save', 'loading'].includes(command)) {

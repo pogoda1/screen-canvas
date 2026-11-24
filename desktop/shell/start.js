@@ -25,7 +25,8 @@ close.addEventListener('click', () => perform(() => api.close(state.generation))
 async function refresh() {
   try {
     const next = await api.state();
-    if (state?.generation === next.generation && state.status === next.status) return;
+    if (state?.generation === next.generation && state.status === next.status &&
+        state.progress?.completed === next.progress?.completed) return;
     state = next;
     refreshBounds();
     status.textContent = [next.name, statusText[next.status], next.error].filter(Boolean).join(' · ');
