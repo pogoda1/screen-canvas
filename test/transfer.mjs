@@ -29,8 +29,6 @@ export async function runCatalog(t, project, options = {}, revalidate = false) {
   await waitGuest(first.electron, "document.querySelector('h1')?.textContent === 'Products'");
   await guestEval(first.electron, "document.querySelector('a').click()");
   await waitGuest(first.electron, "document.querySelector('h1')?.textContent === 'Field Notes'");
-  await first.shell.getByRole('button', { name: '/products/:id', exact: true }).click();
-  await waitGuest(first.electron, "document.querySelector('h1')?.textContent === 'Field Notes'");
   assert.deepEqual(await guestEval(first.electron,
     "[location.pathname, document.querySelector('[data-product-id]').dataset.productId]"),
     ['/products/field-notes', 'field-notes']);

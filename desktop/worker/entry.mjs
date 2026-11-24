@@ -70,6 +70,14 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     return scan();
   }
 
+  async function createScenario(node, { mode, params, data, seed } = {}) {
+    const input = await project.adapter.scenario?.(node, mode) ?? {};
+    return makeScenario(node, {
+      schema: schemas.get(node.id), fixture: { ...input.data, ...data }, params: { ...input.params, ...params },
+      seed: input.seed ?? seed, draft: input.draft, mode: input.mode ?? mode, entities: input.entities
+    });
+  }
+
   async function makeSession({ nodeId, mode, variantId, timeout }) {
     const node = requireNode(nodeId);
     let scenario;
@@ -78,11 +86,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       if (entry.status !== 'ready' || entry.value.scenario.nodeId !== nodeId) throw new Error('Variant cannot open on this screen');
       scenario = entry.value.scenario;
     } else {
-      const input = await project.adapter.scenario?.(node, mode) ?? {};
-      scenario = makeScenario(node, {
-        schema: schemas.get(nodeId), fixture: input.data, params: input.params,
-        seed: input.seed, draft: input.draft, mode: input.mode ?? mode, entities: input.entities
-      });
+      scenario = await createScenario(node, { mode });
     }
     const session = await openSession({ project, host, generation, scenario, timeout, bootstrapFile });
     if (disposed) {
@@ -139,6 +143,14 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       return session.close();
     }
     if (operation === 'invalidate') return session.protocol.invalidate(args.before);
+    if (operation === 'describe') {
+      const { scenario } = await readCurrent(session);
+      if (session.protocol.scenario.nodeId !== scenario.nodeId ||
+          JSON.stringify(session.protocol.scenario.params) !== JSON.stringify(scenario.params)) {
+        session.protocol.setScenario(scenario);
+      }
+      return { id: session.id, nodeId: scenario.nodeId, scenario, schema: schemas.get(scenario.nodeId) };
+    }
     if (operation === 'read') return (await readCurrent(session)).scenario;
     if (operation === 'cancel-save') return session.saving.get(args.requestId)?.abort(new Error('Save cancelled'));
     if (operation === 'requests') return session.requests;
@@ -184,11 +196,19 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       identifyNode(graph, pathname, nodeId) : snapshot.nodeId;
     if (!observed) throw new Error('The current page does not identify a known screen');
     const node = requireNode(observed);
-    const scenario = observed === snapshot.nodeId ? snapshot : makeScenario(node, {
-      schema: schemas.get(observed), seed: snapshot.seed, mode: snapshot.mode,
-      params: inferParams(node.path, pathname)
-    });
-    const schema = schemas.get(scenario.nodeId);
+    const schema = schemas.get(observed);
+    const params = typeof pathname === 'string' ? inferParams(node.path, pathname) : snapshot.params;
+    let scenario = snapshot;
+    if (observed !== snapshot.nodeId || Object.entries(params).some(([key, value]) => snapshot.params[key] !== value)) {
+      const data = {};
+      for (const [key, field] of Object.entries(schema?.fields ?? {})) {
+        if (field.binding?.kind !== 'api') continue;
+        const request = field.binding.key.replace(/:([\w]+)\??/g, (placeholder, param) =>
+          params[param] === undefined ? placeholder : encodeURIComponent(params[param]));
+        if (session.responses.has(request)) data[key] = session.responses.get(request);
+      }
+      scenario = await createScenario(node, { mode: snapshot.mode, seed: snapshot.seed, params, data });
+    }
     if (schema && validateValue(schema, scenario.data, '$', true).length) {
       throw new Error('Preview state does not match the current schema');
     }

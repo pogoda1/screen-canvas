@@ -6,8 +6,9 @@ export class PreviewController {
   bounds = { x: 0, y: 0, width: 0, height: 0 };
   revision = 0;
 
-  constructor(getWindow) {
+  constructor(getWindow, onNavigate) {
     this.getWindow = getWindow;
+    this.onNavigate = onNavigate;
   }
 
   resize(bounds = this.bounds) {
@@ -23,6 +24,7 @@ export class PreviewController {
     const previous = this.current;
     if (!previous) return;
     this.current = undefined;
+    this.description = undefined;
     const { view, policy, worker, id, window } = previous;
     if (!window.isDestroyed()) window.contentView.removeChildView(view);
     if (!view.webContents.isDestroyed()) view.webContents.close();
@@ -60,6 +62,22 @@ export class PreviewController {
       if (!(event.isMainFrame ?? isMainFrame) || (event.isSameDocument ?? inPlace)) return;
       void worker.call('invalidate', { id: session.id, before: Date.now() }).catch(() => {});
     });
+    const preview = this.current;
+    const followNavigation = (_event, url, isMainFrame = true) => {
+      if (!isMainFrame || new URL(url).pathname === new URL(preview.origin + preview.path).pathname) return;
+      const follow = async () => {
+        const description = await worker.call('describe', { id: preview.id });
+        if (this.current !== preview || view.webContents.getURL() !== url) return;
+        preview.path = new URL(url).pathname;
+        preview.schema = description.schema;
+        this.description = description;
+        this.onNavigate();
+      };
+      preview.navigation = (preview.navigation ?? Promise.resolve()).catch(() => {}).then(follow);
+      preview.navigation.catch(() => {});
+    };
+    view.webContents.on('did-navigate-in-page', followNavigation);
+    view.webContents.on('did-navigate', (event, url) => followNavigation(event, url));
     view.webContents.once('render-process-gone', () => {
       if (this.current?.sequence === sequence) void this.close();
     });
@@ -80,6 +98,7 @@ export class PreviewController {
   async dispatch(worker, id, operation, args) {
     const current = this.current;
     if (!current || current.worker !== worker || current.id !== id) throw new Error('Preview selection expired');
+    if (operation === 'patch' || operation === 'save') await current.navigation;
     const result = await worker.call(operation, { ...args, id });
     if (current !== this.current) throw new Error('Preview selection expired');
     const needsReload = operation === 'patch' && result.reload ||

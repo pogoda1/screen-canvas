@@ -15,6 +15,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   const bootstrap = await readFile(bootstrapFile ?? fileURLToPath(new URL('./bootstrap.js', import.meta.url)), 'utf8');
   const sockets = new Set();
   const requests = [];
+  const responses = new Map();
   const waiters = new Set();
   let loading = false;
   let disposed = false;
@@ -65,6 +66,10 @@ export async function openSession({ project, host, generation, scenario, timeout
       try {
         const result = await mock?.(input) ?? generatedMock(input);
         record.status = result?.status ?? (result ? 200 : 501);
+        if (result && record.status >= 200 && record.status < 300) {
+          if (responses.size >= 250) responses.delete(responses.keys().next().value);
+          responses.set(request.method + ' ' + pathname, result.body);
+        }
         return json(response, record.status, result?.body ?? { error: 'No local mock for ' + request.method + ' ' + pathname });
       } catch (error) {
         record.status = 500;
@@ -87,7 +92,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   }
 
   return {
-    id, origin, protocol, requests,
+    id, origin, protocol, requests, responses,
     setLoading(value) {
       loading = value;
       if (!loading) for (const finish of waiters) finish();

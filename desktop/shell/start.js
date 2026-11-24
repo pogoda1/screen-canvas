@@ -29,6 +29,8 @@ let state;
 let selected;
 let selection = 0;
 let disposeEditor;
+let activePreview;
+let lastDescription;
 const refreshBounds = connectPreviewSlot(api, byId('preview-slot'), () => state?.generation);
 const map = connectGraph(byId('graph'), open);
 connectDivider(divider, workbench, refreshBounds);
@@ -42,6 +44,7 @@ async function open(id, variantId) {
   const revision = ++selection;
   disposeEditor?.();
   disposeEditor = undefined;
+  activePreview = undefined;
   selected = id;
   map.select(id);
   showNode(details, state.graph, id);
@@ -53,6 +56,7 @@ async function open(id, variantId) {
   try {
     const result = await api.open(state.generation, id, variantId);
     if (selection !== revision) return;
+    activePreview = result.id;
     disposeEditor = createEditor(byId('editor'), api, state.generation, result, open, variantId);
     return result;
   } catch (error) {
@@ -64,6 +68,7 @@ function clearSelection() {
   selection++;
   disposeEditor?.();
   disposeEditor = undefined;
+  activePreview = undefined;
   selected = undefined;
   map.select(undefined);
   details.replaceChildren();
@@ -105,6 +110,15 @@ async function refresh() {
     progressLabel.textContent = next.scanError ?? (next.scanCancelled ? 'Обход остановлен' :
       total ? `${completed} из ${total} проверок` : '');
     map.update(next.graph ?? { nodes: [], edges: [] });
+    const description = next.live;
+    const fingerprint = description && JSON.stringify([description.id, description.nodeId, description.scenario.params]);
+    if (description && description.id === activePreview && fingerprint !== lastDescription) {
+      lastDescription = fingerprint;
+      selected = description.nodeId;
+      map.select(selected);
+      disposeEditor?.();
+      disposeEditor = createEditor(byId('editor'), api, state.generation, description, open);
+    }
     if (selected) showNode(details, next.graph, selected);
     refreshBounds();
   } catch (error) {

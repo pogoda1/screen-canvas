@@ -23,9 +23,9 @@ function launchWorker(root) {
   return utilityProcess.fork(workerPath, [bootstrap], { cwd: root, env, serviceName: 'Screen Canvas Project' });
 }
 
-const preview = new PreviewController(() => window);
 let crawling;
 let shellVersion = 0;
+const preview = new PreviewController(() => window, () => { shellVersion++; });
 const controller = new ProjectController(launchWorker, state => {
   shellVersion++;
   if (state.status !== 'ready') {
@@ -78,7 +78,7 @@ ipcMain.handle(channel, async (event, payload) => {
     assertJson(payload);
     const { command, generation, args } = payload;
     if (command === 'state') return {
-      value: args?.version === shellVersion ? null : { ...controller.state, version: shellVersion }
+      value: args?.version === shellVersion ? null : { ...controller.state, version: shellVersion, live: preview.description }
     };
     if (command === 'choose') {
       const { canceled, filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
