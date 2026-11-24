@@ -45,19 +45,25 @@ export function routerImport(ts, checker, node, name) {
 }
 
 function actionContext(ts, node) {
-  let condition;
+  const branches = [];
   let label;
   for (let cursor = node.parent; cursor; cursor = cursor.parent) {
-    if (!condition && (ts.isConditionalExpression(cursor) || ts.isIfStatement(cursor))) {
+    if (ts.isConditionalExpression(cursor) || ts.isIfStatement(cursor)) {
       const positive = cursor.whenTrue ?? cursor.thenStatement;
-      const inPositive = node.pos >= positive.pos && node.end <= positive.end;
-      condition = inPositive ? cursor.expression?.getText() ?? cursor.condition.getText()
-        : '!' + (cursor.expression?.getText() ?? cursor.condition.getText());
+      const negative = cursor.whenFalse ?? cursor.elseStatement;
+      const includes = branch => branch && node.pos >= branch.pos && node.end <= branch.end;
+      const expression = (cursor.expression ?? cursor.condition).getText();
+      if (includes(positive)) branches.unshift({ expression, positive: true });
+      if (includes(negative)) branches.unshift({ expression, positive: false });
     }
     if (!label && ts.isJsxElement(cursor)) {
       label = cursor.children.filter(ts.isJsxText).map(text => text.getText().trim()).filter(Boolean).join(' ');
     }
   }
+  const condition = branches.map(({ expression, positive }) => {
+    if (!positive) return '!(' + expression + ')';
+    return branches.length === 1 ? expression : '(' + expression + ')';
+  }).join(' && ');
   return { condition, label };
 }
 

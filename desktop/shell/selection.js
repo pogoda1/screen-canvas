@@ -67,6 +67,9 @@ function directionGroup(title, edges, neighborId, neighbors) {
       if (step.type === 'press') item.append(paragraph('Клавиша · ' + step.key));
     }
     const { evidence } = edge;
+    if (evidence.status === 'confirmed') for (const value of edge.displayValues ?? []) {
+      item.append(paragraph('Ответ · ' + JSON.stringify(value)));
+    }
     if (edge.expectedPath) item.append(paragraph('Ожидаемый путь · ' + edge.expectedPath));
     if (evidence.actualPath) item.append(paragraph('Наблюдаемый путь · ' + evidence.actualPath));
     const status = paragraph(evidenceLabels[evidence.status], 'edge-status');

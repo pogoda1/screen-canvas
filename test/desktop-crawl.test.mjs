@@ -17,6 +17,7 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{value:'expected'}}],
         steps:[{type:'click',selector:'#answer'}] },
       { id:'accepted-answer', source:'route:/', target:'route:/next#index', label:'Expected answer',
+        displayValues:['observed',15,false,{ token:'not for display' }],
         expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{
           value:'observed', target:'answer-label', trusted:true,
           sequence:['pointerdown','mousedown','pointerup','mouseup','click']}}],
@@ -159,6 +160,12 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(wrongDoc.actualPath, '/legal/privacy');
   assert.equal(wrongDoc.expectedPath, '/legal/offer');
   assert.match(graph.edges.find(edge => edge.id === 'never').evidence.reason, /unavailable/);
+  await shell.getByRole('button', { name: '/', exact: true }).click();
+  const proven = shell.locator('.edge-details [data-edge-id="accepted-answer"]');
+  for (const value of ['"observed"', '15', 'false']) {
+    await proven.getByText('Ответ · ' + value, { exact: true }).waitFor();
+  }
+  assert.doesNotMatch(await proven.innerText(), /not for display|answer-label/);
 });
 
 test('capture waits for painted content in the current document without gating live readiness', { timeout: 35_000 }, async t => {

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { makeHost } from './helpers/host-fixture.mjs';
 import { scanProject } from '../core/discovery/project.mjs';
 
 test('discovers nested, indexed and lazy routes across aliases and referenced configs', async t => {
@@ -61,4 +62,33 @@ test('discovers nested, indexed and lazy routes across aliases and referenced co
     ['route:/old', 'route:/products#index', '/products']
   ]);
   assert.ok(nodes[2].diagnostics.some(diagnostic => diagnostic.code === 'action-ambiguous'));
+});
+
+
+test('an else after multiple conditional branches states every excluded condition', async t => {
+  const root = await makeHost(t, {
+    'src/main.jsx': `
+      import {Routes, Route, useNavigate} from 'react-router-dom';
+      function Choice() {
+        const navigate = useNavigate();
+        function open(item) {
+          if (item.kind === 'chat') navigate('/chat');
+          else if (item.kind === 'roleplay') navigate('/roleplay');
+          else navigate('/lesson');
+        }
+        return <button onClick={() => open({kind:'lesson'})}>Open</button>;
+      }
+      export default <Routes>
+        <Route path="/" element={<Choice/>}/>
+        <Route path="/chat" element={<p>Chat</p>}/>
+        <Route path="/roleplay" element={<p>Roleplay</p>}/>
+        <Route path="/lesson" element={<p>Lesson</p>}/>
+      </Routes>;
+    `
+  });
+  const { edges } = await scanProject(root);
+  const byTarget = Object.fromEntries(edges.map(({ target, condition }) => [target, condition]));
+  assert.equal(byTarget['route:/chat'], "item.kind === 'chat'");
+  assert.equal(byTarget['route:/roleplay'], "!(item.kind === 'chat') && (item.kind === 'roleplay')");
+  assert.equal(byTarget['route:/lesson'], "!(item.kind === 'chat') && !(item.kind === 'roleplay')");
 });

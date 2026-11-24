@@ -43,7 +43,12 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     const extraNodes = typeof project.adapter.nodes === 'function' ? await project.adapter.nodes() : project.adapter.nodes;
     const actions = typeof project.adapter.actions === 'function' ? await project.adapter.actions() : project.adapter.actions;
     const nodes = [...analysis.nodes, ...(extraNodes ?? [])];
-    const edges = [...analysis.edges, ...(actions ?? []).map(action => ({ ...action, action: 'adapter', evidence: { status: 'static' } }))];
+    const edges = [...analysis.edges, ...(actions ?? []).map(({ displayValues, ...action }) => ({
+      ...action, action: 'adapter', evidence: { status: 'static' },
+      ...(Array.isArray(displayValues) ? { displayValues: displayValues.filter(value =>
+        typeof value === 'string' && value.length <= 120 || typeof value === 'boolean' ||
+        typeof value === 'number' && Number.isFinite(value)).slice(0, 12) } : {})
+    }))];
     const filename = project.adapter.openapi ?? 'openapi.json';
     const openapi = await projectPath(project.root, filename, !project.adapter.openapi);
     const operations = openapi ? openApiOperations(JSON.parse(await readFile(openapi, 'utf8')), filename) : new Map();

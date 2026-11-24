@@ -63,6 +63,7 @@ export interface GraphEdge {
   condition?: string;
   role?: string;
   action?: string;
+  displayValues?: Array<string | number | boolean>;
   evidence: Evidence;
   expectedPath?: string;
 }
@@ -130,6 +131,8 @@ export interface ProjectAction {
   condition?: string;
   role?: string;
   steps: ActionStep[];
+  /** Static answer labels shown after confirmation. Never use captured request data. */
+  displayValues?: Array<string | number | boolean>;
   expectedPath?: string;
   expectRequests?: ExpectedMockExchange[];
   expectSnapshot?: { mode?: string; data?: JsonObject };
