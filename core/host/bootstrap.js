@@ -99,7 +99,7 @@
       mounted: Boolean(ready && mounted), applied: revision, documentId: stamp.documentId };
     if (forCapture && ready) {
       try {
-        const checks = await Promise.all(bindings.filter(binding => binding.captureReady)
+        const checks = await Promise.all([...bindings].filter(binding => binding.captureReady)
           .map(async binding => binding.captureReady()));
         observed.captureReady = checks.every(result => result === true);
       } catch { observed.captureError = true; }

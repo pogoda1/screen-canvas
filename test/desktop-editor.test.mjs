@@ -116,7 +116,7 @@ test('a diagnostic card keeps a live form editable and saves and reopens its vis
       import { registerBrowserBindings } from 'react-screen-canvas/browser';
       const field = () => document.querySelector('#live-title');
       registerBrowserBindings({
-        ready: () => Boolean(field()), captureReady: () => location.pathname === '/reversed',
+        ready: () => Boolean(field()), captureReady: () => location.pathname !== '/',
         apply: scenario => { field().value = scenario.data.title; },
         read: scenario => ({...scenario, data:{title:field().value}})
       });
@@ -133,6 +133,7 @@ test('a diagnostic card keeps a live form editable and saves and reopens its vis
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
         <Route path="/" element={form}/>
         <Route path="/reversed" element={form}/>
+        <Route path="/allowed" element={form}/>
       </Routes></BrowserRouter>);
     `
   });
@@ -143,6 +144,8 @@ test('a diagnostic card keeps a live form editable and saves and reopens its vis
     await node.getByText('Снимок недоступен').waitFor();
     assert.equal(await node.locator('img').count(), 0);
   }
+  const allowed = first.shell.getByRole('button', { name: '/allowed', exact: true });
+  await allowed.locator('img').waitFor();
   await card.click();
   await waitGuest(first.electron, "document.querySelector('#live-title')?.value === 'Original'");
   const value = 'Visible edit 716';
