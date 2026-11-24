@@ -25,6 +25,7 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
         return ({ path, search }) => {
           if (path === '/api/test') return { body: { label: scenario.data.label, cursor: ++cursor } };
           if (path === '/api/search') return { body: { search } };
+          if (path === '/api/null') return { body: null };
         };
       }
     };`
@@ -54,7 +55,12 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
   assert.deepEqual(await api(a.origin), { label: 'first', cursor: 1 });
   assert.deepEqual(await api(b.origin), { label: 'second', cursor: 1 });
   assert.deepEqual(await api(a.origin), { label: 'first', cursor: 2 });
-  assert.equal((await fetch(b.origin + '/api/unknown')).status, 501);
+  const absent = await fetch(b.origin + '/api/unknown');
+  assert.equal(absent.status, 501);
+  assert.match((await absent.json()).error, /No local mock/);
+  const explicitNull = await fetch(b.origin + '/api/null');
+  assert.equal(explicitNull.status, 200);
+  assert.equal(await explicitNull.text(), 'null');
   assert.deepEqual(await (await fetch(b.origin + '/api/search?q=a%26b&q=c')).json(), { search: '?q=a%26b&q=c' });
 
   async function document() {

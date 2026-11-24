@@ -77,7 +77,7 @@ export async function openSession({ project, host, generation, scenario, timeout
           exchanges.push({ sequence, method: request.method, path: pathname, status: record.status,
             body: input.body, response: result.body });
         }
-        return json(response, record.status, result?.body ?? { error: 'No local mock for ' + request.method + ' ' + pathname });
+        return json(response, record.status, result ? result.body : { error: 'No local mock for ' + request.method + ' ' + pathname });
       } catch (error) {
         record.status = 500;
         return json(response, 500, { error: error.message });
