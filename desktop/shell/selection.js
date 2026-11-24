@@ -39,10 +39,65 @@ function showCapture(details, report) {
   details.append(section);
 }
 
+function directionGroup(title, edges, neighborId, neighbors) {
+  if (!edges.length) return undefined;
+  const section = document.createElement('section');
+  section.className = 'edge-group';
+  const heading = document.createElement('h4');
+  heading.textContent = title;
+  const list = document.createElement('ul');
+  list.className = 'edge-details';
+  for (const edge of edges) {
+    const item = document.createElement('li');
+    item.dataset.edgeId = edge.id;
+    const label = document.createElement('strong');
+    label.textContent = edge.label;
+    const neighbor = neighbors.get(neighborId(edge));
+    const path = neighbor?.path ?? neighborId(edge).replace(/^route:/, '');
+    const direction = document.createElement('span');
+    direction.className = 'edge-neighbor';
+    direction.textContent = [neighbor?.label !== path && neighbor?.label, path,
+      neighbor?.state && '#' + neighbor.state].filter(Boolean).join(' · ');
+    item.append(label, direction);
+
+    if (edge.condition) item.append(paragraph('Условие · ' + edge.condition));
+    if (edge.role) item.append(paragraph('Роль · ' + edge.role));
+    for (const step of edge.steps ?? []) {
+      if (step.type === 'fill') item.append(paragraph('Значение · ' + JSON.stringify(step.value)));
+      if (step.type === 'press') item.append(paragraph('Клавиша · ' + step.key));
+    }
+    const { evidence } = edge;
+    if (edge.expectedPath) item.append(paragraph('Ожидаемый путь · ' + edge.expectedPath));
+    if (evidence.actualPath) item.append(paragraph('Наблюдаемый путь · ' + evidence.actualPath));
+    const status = paragraph(evidenceLabels[evidence.status], 'edge-status');
+    status.dataset.status = evidence.status;
+    item.append(status);
+    if (evidence.reason) item.append(paragraph(evidence.reason, 'edge-reason'));
+    list.append(item);
+  }
+  section.append(heading, list);
+  return section;
+}
+
+function showEdges(details, edges, graph, id) {
+  if (!edges.length) return;
+  const neighbors = new Map(graph.nodes.map(node => [node.id, node]));
+  const content = document.createElement('section');
+  content.className = 'node-connections';
+  const heading = document.createElement('h3');
+  heading.textContent = 'Связи экрана';
+  content.append(heading);
+  const incoming = directionGroup('Входящие', edges.filter(edge => edge.target === id), edge => edge.source, neighbors);
+  const outgoing = directionGroup('Исходящие', edges.filter(edge => edge.source === id), edge => edge.target, neighbors);
+  if (incoming) content.append(incoming);
+  if (outgoing) content.append(outgoing);
+  details.append(content);
+}
+
 let lastDetails;
 export function showNode(details, graph, id) {
   const node = graph?.nodes.find(candidate => candidate.id === id);
-  const edges = graph?.edges.filter(edge => edge.source === id) ?? [];
+  const edges = graph?.edges.filter(edge => edge.source === id || edge.target === id) ?? [];
   const fingerprint = JSON.stringify([id, node?.capture, node?.diagnostics, node?.requests, edges]);
   if (fingerprint === lastDetails && details.firstChild) return;
   lastDetails = fingerprint;
@@ -63,17 +118,5 @@ export function showNode(details, graph, id) {
   for (const summary of details.querySelectorAll('summary')) {
     if (expanded.has(summary.textContent)) summary.parentElement.open = true;
   }
-  if (!edges.length) return;
-  const list = document.createElement('ul');
-  list.className = 'edge-details';
-  for (const edge of edges) {
-    const item = document.createElement('li');
-    const label = document.createElement('strong');
-    label.textContent = edge.label + ' → ' + (edge.expectedPath ?? edge.target.replace(/^route:/, ''));
-    const evidence = document.createElement('small');
-    evidence.textContent = [edge.condition, edge.role, evidenceLabels[edge.evidence.status], edge.evidence.reason].filter(Boolean).join(' · ');
-    item.append(label, evidence);
-    list.append(item);
-  }
-  details.append(list);
+  showEdges(details, edges, graph, id);
 }
