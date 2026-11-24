@@ -7,7 +7,7 @@ const invoke = async (command, generation, args) => {
 };
 
 contextBridge.exposeInMainWorld('screenCanvas', Object.freeze({
-  state: () => invoke('state'),
+  state: version => invoke('state', undefined, version === undefined ? undefined : { version }),
   choose: () => invoke('choose'),
   retry: generation => invoke('retry', generation),
   close: generation => invoke('close', generation),

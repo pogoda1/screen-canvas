@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { launchCanvas, pick, waitGuest } from './helpers/electron.mjs';
+import { makeHost } from './helpers/host-fixture.mjs';
+
+test('desktop map labels transitions and keeps the latest keyboard or pointer selection', { timeout: 40000 }, async t => {
+  const folder = await makeHost(t);
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const home = shell.getByRole('button', { name: '/', exact: true });
+  const next = shell.getByRole('button', { name: '/next', exact: true });
+  await home.waitFor();
+  await shell.getByRole('button', { name: 'Увеличить масштаб' }).click();
+  assert.equal(await shell.locator('#zoom-value').textContent(), '115%');
+  await shell.getByRole('button', { name: 'Сбросить масштаб' }).click();
+  const canvas = await shell.locator('#graph').boundingBox();
+  await shell.mouse.move(canvas.x + canvas.width - 15, canvas.y + canvas.height - 15);
+  await shell.mouse.down();
+  await shell.mouse.move(canvas.x + canvas.width - 45, canvas.y + canvas.height - 35);
+  await shell.mouse.up();
+  assert.match(await shell.locator('#graph-stage').getAttribute('style'), /translate\(-30px, -20px\)/);
+  await shell.getByRole('button', { name: 'Сбросить масштаб' }).click();
+  await shell.getByText('Next screen', { exact: true }).waitFor();
+  await home.focus();
+  await home.press('Enter');
+  await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Home screen'");
+  await next.focus();
+  await next.press('Enter');
+  await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Next screen'");
+  await shell.evaluate(() => {
+    document.querySelector('button[data-node="route:/"]').click();
+    document.querySelector('button[data-node="route:/next"]').click();
+  });
+  await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Next screen'");
+  assert.equal(await next.getAttribute('aria-pressed'), 'true');
+  assert.equal(await home.getAttribute('aria-pressed'), 'false');
+  const divider = shell.getByRole('separator');
+  await divider.focus();
+  await divider.press('ArrowRight');
+  assert.ok(Number(await divider.getAttribute('aria-valuenow')) >= 286);
+  assert.equal(await shell.locator('#details h2').textContent(), '/next');
+});

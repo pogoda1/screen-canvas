@@ -34,9 +34,17 @@ export class PreviewController {
     return this.closeCurrent();
   }
 
-  async open(worker, nodeId, variantId) {
+  open(worker, nodeId, variantId) {
     const sequence = ++this.revision;
-    await this.closeCurrent();
+    const closing = this.closeCurrent();
+    const older = this.opening;
+    this.opening = Promise.allSettled([closing, older]).then(() =>
+      this.openCurrent(worker, nodeId, variantId, sequence));
+    return this.opening;
+  }
+
+  async openCurrent(worker, nodeId, variantId, sequence) {
+    if (sequence !== this.revision) throw new Error('Preview selection was superseded');
     const session = await worker.call('open', { nodeId, ...(variantId ? { variantId } : {}) });
     const window = this.getWindow();
     if (!window || window.isDestroyed() || sequence !== this.revision) {

@@ -2,22 +2,56 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Screen Canvas</title>
   <link rel="stylesheet" href="./styles.css">
   <script type="module" src="./start.js"></script>
 </head>
 <body>
-  <header>
-    <h1>Screen Canvas</h1>
-    <button id="choose">Открыть проект</button>
-    <button id="retry" hidden>Повторить</button>
-    <button id="close" hidden>Закрыть проект</button>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Screen Canvas</h1>
+      <p id="status" role="status"></p>
+    </div>
+    <div class="project-actions">
+      <button id="rebuild" hidden>Перестроить</button>
+      <button id="cancel" hidden>Остановить обход</button>
+      <button id="retry" hidden>Повторить</button>
+      <button id="close" hidden>Закрыть проект</button>
+      <button id="choose">Открыть проект</button>
+    </div>
   </header>
-  <main>
-    <p id="status" role="status"></p>
-    <div id="workbench"><ul id="routes"></ul><div id="preview-slot" aria-label="Живой экран"></div></div>
+  <main id="workbench">
+    <section class="map" aria-label="Карта экранов">
+      <div class="map-tools">
+        <div class="map-progress">
+          <progress id="progress" max="1" value="0" hidden></progress>
+          <span id="progress-label"></span>
+        </div>
+        <div class="zoom-controls">
+          <button id="zoom-out" aria-label="Уменьшить масштаб">−</button>
+          <button id="zoom-value" aria-label="Сбросить масштаб">100%</button>
+          <button id="zoom-in" aria-label="Увеличить масштаб">+</button>
+        </div>
+      </div>
+      <div id="graph" tabindex="0" aria-label="Перемещение по карте">
+        <div id="graph-stage">
+          <canvas aria-hidden="true"></canvas>
+          <div id="edge-labels" aria-hidden="true"></div>
+          <div id="routes"><div id="cards"></div></div>
+        </div>
+      </div>
+    </section>
+    <div id="divider" tabindex="0" role="separator" aria-orientation="vertical" aria-label="Ширина карты" hidden></div>
+    <section id="live" aria-label="Выбранный экран" hidden>
+      <div id="preview-slot" aria-label="Живой экран"></div>
+      <aside class="inspector">
+        <div id="details"></div>
+        <p id="preview-error" role="status"></p>
+        <div id="editor"></div>
+      </aside>
+    </section>
   </main>
 </body>
 </html>

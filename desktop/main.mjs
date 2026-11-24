@@ -8,7 +8,7 @@ import { ProjectController } from './project-controller.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const shellUrl = 'app://canvas/index.html';
-const shellFiles = new Set(['index.html', 'start.js', 'preview-slot.js', 'styles.css']);
+const shellFiles = new Set(['index.html', 'start.js', 'preview-slot.js', 'styles.css', 'graph.js', 'layout.js', 'selection.js']);
 const channel = 'canvas:command';
 let window;
 
@@ -25,7 +25,9 @@ function launchWorker(root) {
 
 const preview = new PreviewController(() => window);
 let crawling;
+let shellVersion = 0;
 const controller = new ProjectController(launchWorker, state => {
+  shellVersion++;
   if (state.status !== 'ready') {
     crawling?.abort.abort();
     crawling = undefined;
@@ -42,10 +44,12 @@ function startCrawl() {
   crawling = operation;
   operation.done = crawlGraph(controller.current, graph, abort.signal, (completed, total) => {
     if (crawling === operation && !abort.signal.aborted) {
+      shellVersion++;
       controller.state = { ...current, graph, progress: { completed, total } };
     }
   }).catch(error => {
     if (crawling === operation && !abort.signal.aborted) {
+      shellVersion++;
       controller.state = { ...controller.state, scanError: error.message };
     }
   });
@@ -73,7 +77,9 @@ ipcMain.handle(channel, async (event, payload) => {
   try {
     assertJson(payload);
     const { command, generation, args } = payload;
-    if (command === 'state') return { value: controller.state };
+    if (command === 'state') return {
+      value: args?.version === shellVersion ? null : { ...controller.state, version: shellVersion }
+    };
     if (command === 'choose') {
       const { canceled, filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
       if (!canceled && filePaths.length === 1 && trusted(event)) void controller.choose(filePaths[0]).catch(error => {
@@ -106,6 +112,7 @@ ipcMain.handle(channel, async (event, payload) => {
     }
     if (command === 'cancel-scan') {
       crawling?.abort.abort();
+      shellVersion++;
       controller.state = { ...controller.state, scanCancelled: true };
       return { value: null };
     }
