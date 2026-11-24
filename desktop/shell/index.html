@@ -37,6 +37,20 @@
       </div>
       <div id="graph" tabindex="0" aria-label="Перемещение по карте">
         <div id="graph-stage">
+          <svg id="connections" aria-hidden="true" focusable="false" hidden>
+            <defs>
+              <marker id="arrow-confirmed" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                <path d="M0 0L8 4L0 8Z" fill="#70d6c8"/>
+              </marker>
+              <marker id="arrow-unverified" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                <path d="M0 0L8 4L0 8Z" fill="#d4a467"/>
+              </marker>
+              <marker id="arrow-static" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+                <path d="M0 0L8 4L0 8Z" fill="#6f8094"/>
+              </marker>
+            </defs>
+            <g></g>
+          </svg>
           <div id="routes"><div id="cards"></div></div>
         </div>
       </div>

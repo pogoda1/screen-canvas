@@ -51,7 +51,11 @@ test('the overview has no edge overlays and selection lists only complete adjace
   const card = shell.getByRole('button', { name: '/focus', exact: true });
   await card.waitFor();
   const stage = shell.locator('#graph-stage');
-  assert.equal(await stage.locator('canvas, .edge-label, #edge-labels').count(), 0);
+  const layer = stage.locator('#connections');
+  const lines = layer.locator('g path');
+  assert.equal(await layer.isVisible(), false);
+  assert.equal(await lines.count(), 0);
+  assert.equal(await stage.locator('.edge-label, #edge-labels').count(), 0);
   assert.equal(await shell.getByRole('heading', { name: 'Связи экрана' }).count(), 0);
   await shell.getByRole('button', { name: 'Увеличить масштаб' }).click();
   const transform = await stage.getAttribute('style');
@@ -76,5 +80,22 @@ test('the overview has no edge overlays and selection lists only complete adjace
   await incoming.locator('[data-edge-id="arrive"]').getByText('Подтверждено').waitFor();
   await outgoing.locator('[data-edge-id="details-guest"]').getByText('The action control is unavailable').waitFor();
   assert.equal(await card.getAttribute('aria-pressed'), 'true');
-  assert.equal(await stage.locator('canvas, .edge-label, #edge-labels').count(), 0);
+  async function checkSegments(selected) {
+    const expected = edges.filter(edge => edge.source === selected || edge.target === selected)
+      .map(edge => edge.id).sort();
+    assert.equal(await layer.isVisible(), true);
+    assert.deepEqual(await lines.evaluateAll(paths => paths.map(item => item.dataset.edgeId).sort()), expected);
+    assert.equal(await layer.evaluate(item => getComputedStyle(item).pointerEvents), 'none');
+    assert.ok(await lines.evaluateAll(paths => paths.every(item =>
+      item.getTotalLength() > 0 && getComputedStyle(item).stroke !== 'none' &&
+      item.getAttribute('marker-end')?.startsWith('url(#arrow-'))));
+    assert.equal(await stage.locator('.edge-label, #edge-labels, #connections text').count(), 0);
+  }
+  await checkSegments('route:/focus');
+  const selectedTransform = await stage.getAttribute('style');
+  await shell.getByRole('button', { name: '/', exact: true }).click();
+  await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Landing'");
+  await checkSegments('route:/');
+  assert.equal(await stage.getAttribute('style'), selectedTransform);
+  assert.equal(await layer.locator('g path[data-edge-id="self"]').count(), 0);
 });

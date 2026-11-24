@@ -32,7 +32,12 @@ progress { width: 64px; height: 7px; accent-color: var(--mint); }
 #graph { min-width: 0; min-height: 0; position: relative; overflow: hidden; background-image: radial-gradient(circle, #35404c 1px, transparent 1.2px); background-size: 22px 22px; cursor: grab; touch-action: none; }
 #graph.panning { cursor: grabbing; }
 #graph-stage { position: absolute; transform-origin: 0 0; }
-#cards { position: absolute; inset: 0; }
+#cards, #connections { position: absolute; inset: 0; }
+#connections { pointer-events: none; overflow: visible; }
+#connections[hidden] { display: none; }
+#connections g path { fill: none; stroke-width: 1.65; stroke: #6f8094; stroke-dasharray: 4 4; }
+#connections g path[data-status="confirmed"] { stroke: #70d6c8; stroke-dasharray: none; }
+#connections g path[data-status="unverified"] { stroke: #d4a467; }
 .group-heading { position: absolute; left: 31px; padding: .3rem .55rem; color: var(--mint); font: 12px var(--mono); }
 .group-heading::before { content: '▾ '; }
 .group-heading[aria-expanded="false"]::before { content: '▸ '; }
