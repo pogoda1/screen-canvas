@@ -171,6 +171,11 @@ function createWindow() {
   for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
     contents.on(name, event => event.preventDefault());
   }
+  const restoreShell = (_event, url, isMainFrame = true) => {
+    if (isMainFrame && url !== shellUrl) void contents.loadURL(shellUrl).catch(() => {});
+  };
+  contents.on('did-navigate', (event, url) => restoreShell(event, url));
+  contents.on('did-navigate-in-page', restoreShell);
   window.on('resize', () => preview.resize());
   window.on('closed', () => { window = undefined; });
   return window.loadURL(shellUrl);

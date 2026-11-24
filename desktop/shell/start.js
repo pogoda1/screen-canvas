@@ -4,6 +4,10 @@ import { connectDivider } from './layout.js';
 import { connectPreviewSlot } from './preview-slot.js';
 import { showNode } from './selection.js';
 
+navigation.addEventListener('navigate', event => {
+  if (event.destination.url !== 'app://canvas/index.html') event.preventDefault();
+});
+
 const api = window.screenCanvas;
 const byId = id => document.getElementById(id);
 const status = byId('status');
