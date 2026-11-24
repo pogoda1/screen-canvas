@@ -23,8 +23,18 @@ test('Chromium captures node content and proves distinct observed actions', { ti
           <button id="one" onClick={() => navigate('/next')}>One</button>
           <button id="two" onClick={() => navigate('/next')}>Two</button></main>;
       }
+      function Broken() { throw new Error('Broken route render'); }
+      class Boundary extends React.Component {
+        static getDerivedStateFromError() { return { error: true }; }
+        render() { return this.state?.error ? <h1 data-screen-canvas-error>Route failed</h1> : this.props.children; }
+      }
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
         <Route path="/" element={<Home/>}/>
+        <Route path="/broken" element={<Boundary><Broken /></Boundary>}/>
+        <Route path="/loading" element={<div data-screen-canvas-loading><h1>Loading</h1></div>}/>
+        <Route path="/empty" element={<main><h1>Only layout</h1></main>}>
+          <Route index element={<p>Index child without an outlet</p>}/>
+        </Route>
         <Route path="/old" element={<Navigate to="/next" replace/>}/>
         <Route path="/next" element={<><h1>Layout</h1><Outlet/></>}>
           <Route index element={<p>Index content</p>}/>
@@ -50,6 +60,13 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.ok(index.screenshot.length > 3000);
   assert.equal(layout.screenshot, undefined);
   assert.equal(layout.diagnostics.at(-1).code, 'different-screen');
+  for (const [id, diagnostic] of [
+    ['route:/broken', 'render-error'], ['route:/loading', 'loading-timeout'], ['route:/empty#index', 'index-unmounted']
+  ]) {
+    const node = graph.nodes.find(item => item.id === id);
+    assert.equal(node.screenshot, undefined, id);
+    assert.equal(node.diagnostics.at(-1).code, diagnostic, id);
+  }
   assert.equal(graph.edges.find(edge => edge.action === 'link').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.action === 'redirect').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.id === 'one').evidence.status, 'confirmed');

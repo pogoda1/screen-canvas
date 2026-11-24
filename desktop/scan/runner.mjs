@@ -29,7 +29,8 @@ export async function crawlGraph(worker, graph, signal, update) {
       if (failure) {
         node.diagnostics.push({ code: 'mock-response', message: failure.method + ' ' + failure.path + ' → ' + failure.status });
       }
-      if (observed.id !== node.id || !observed.ready) {
+      if (observed.diagnostic) node.diagnostics.push(observed.diagnostic);
+      else if (observed.id !== node.id || !observed.ready) {
         const reason = failure ? 'A required mock failed' : observed.id ? 'Rendered ' + observed.id :
           capture.errors.length ? capture.errors.at(-1) : 'No matching content became ready';
         node.diagnostics.push({ code: observed.id ? 'different-screen' : 'not-ready', message: reason });
@@ -55,7 +56,7 @@ export async function crawlGraph(worker, graph, signal, update) {
       }
       const observed = await awaitScreen(capture, graph, signal, { expected: edge.target });
       actual = observed.id;
-      if (!observed.ready) reason = 'Target did not become ready';
+      if (!observed.ready) reason = observed.diagnostic?.message ?? 'Target did not become ready';
     } catch (error) { reason = error.message; }
     finally {
       if (!signal.aborted) edge.evidence = edgeEvidence(edge, actual, await capture?.requests() ?? [], reason);

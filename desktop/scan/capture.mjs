@@ -41,22 +41,31 @@ export async function createCapture(worker, nodeId, role, signal) {
 export async function awaitScreen(capture, graph, signal, { expected, timeout = 2600 } = {}) {
   const deadline = Date.now() + timeout;
   let actual;
+  let obstruction;
   let last;
   let firstObserved = 0;
   while (Date.now() < deadline) {
     signal.throwIfAborted();
     if (capture.contents.isDestroyed()) break;
     let status;
+    const url = capture.contents.getURL();
+    const pathname = url ? new URL(url).pathname : '/';
+    const possibleId = identifyNode(graph, pathname);
+    const candidate = graph.nodes.find(node => node.id === possibleId);
+    const hint = candidate?.index ? candidate.mount : null;
     try {
       status = await Promise.race([
-        capture.contents.executeJavaScript('globalThis.__screenCanvasStatus?.()'),
+        capture.contents.executeJavaScript('globalThis.__screenCanvasStatus?.(' + JSON.stringify(hint ?? null) + ')'),
         setTimeout(300, undefined, { signal })
       ]);
     }
     catch { }
-    if (status?.ready) {
-      const url = capture.contents.getURL();
-      actual = url && identifyNode(graph, new URL(url).pathname, status.nodeId);
+    if (status?.failure) return { ready: false, diagnostic: { code: 'render-error', message: status.failure } };
+    const unmounted = candidate?.index && status?.nodeId !== candidate.id && !status?.mounted;
+    obstruction = status?.loading ? { code: 'loading-timeout', message: 'The route still displays a loading screen' } :
+      unmounted ? { code: 'index-unmounted', message: 'The index content was not observed in the shared layout' } : undefined;
+    if (status?.ready && !unmounted && url === capture.contents.getURL()) {
+      actual = url && identifyNode(graph, pathname, status.nodeId);
       if (actual && actual === expected) return { id: actual, ready: true };
       if (last !== actual || !firstObserved) {
         firstObserved = Date.now();
@@ -67,7 +76,7 @@ export async function awaitScreen(capture, graph, signal, { expected, timeout = 
     }
     await setTimeout(40, undefined, { signal });
   }
-  return { id: actual, ready: false };
+  return { id: actual, ready: false, diagnostic: obstruction };
 }
 
 export async function snapshot(capture, signal) {
