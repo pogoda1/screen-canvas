@@ -19,9 +19,14 @@ test('the overview has no edge overlays and selection lists only complete adjace
           condition:'Guest without saved settings',role:'guest',steps:[{type:'click',selector:'#missing'}]},
         {id:'self',source:'route:/focus',target:'route:/focus',label:'Refresh the selected card',
           steps:[{type:'click',selector:'#self'}]},
+        {id:'noop',source:'route:/focus',target:'route:/focus',label:'No effect',
+          steps:[{type:'click',selector:'#noop'}]},
+        {id:'same-effect',source:'route:/focus',target:'route:/focus',label:'Proved effect',
+          steps:[{type:'click',selector:'#effect'}],expectRequests:[{method:'POST',path:'/api/update',status:200}]},
         {id:'unrelated',source:'route:/',target:'route:/detail',label:'Unrelated action',
           steps:[{type:'click',selector:'#other'}]}
-      ]
+      ],
+      createMocks: () => ({path}) => path === '/api/update' ? {status:200,body:{}} : undefined
     };`,
     'src/main.jsx': `
       import React from 'react';
@@ -39,6 +44,8 @@ test('the overview has no edge overlays and selection lists only complete adjace
         return <main><h1>Focused form</h1><input id="query" aria-label="Search"/>
           <button id="detail" onClick={() => navigate('/detail')}>Details</button>
           <button id="self" onClick={() => navigate('/focus')}>Refresh</button>
+          <button id="noop" onClick={() => {}}>No effect</button>
+          <button id="effect" onClick={() => fetch('/api/update',{method:'POST'})}>Update</button>
         </main>;
       }
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
@@ -76,6 +83,14 @@ test('the overview has no edge overlays and selection lists only complete adjace
   assert.deepEqual((await ids(outgoing)).sort(), relation('source'));
   assert.ok(relation('target').includes('self') && relation('source').includes('self'));
   assert.ok(relation('source').includes('details-guest') && relation('source').includes('details-member'));
+  const evidence = id => edges.find(edge => edge.id === id).evidence;
+  assert.equal(evidence('self').status, 'confirmed', JSON.stringify(evidence('self')));
+  assert.equal(evidence('self').transitionObserved, true);
+  assert.equal(evidence('noop').status, 'unverified');
+  assert.match(evidence('noop').reason, /No repeated navigation/);
+  assert.equal(evidence('same-effect').status, 'confirmed');
+  assert.equal(evidence('same-effect').actionEffect, true);
+  assert.equal(evidence('same-effect').transitionObserved, undefined);
   await outgoing.getByText('Роль · member').waitFor();
   await outgoing.getByText('Значение · "Sample local value"').waitFor();
   assert.equal(await shell.getByText('Unrelated action', { exact: true }).count(), 0);
@@ -97,6 +112,7 @@ test('the overview has no edge overlays and selection lists only complete adjace
     assert.equal(await stage.locator('.edge-label, #edge-labels, #connections text').count(), 0);
   }
   await checkSegments('route:/focus');
+  assert.equal(await layer.locator('g path[data-edge-id="noop"]').count(), 0);
   const selectedTransform = await stage.getAttribute('style');
   await shell.getByRole('button', { name: '/', exact: true }).click();
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Landing'");

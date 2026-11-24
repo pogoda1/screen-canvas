@@ -98,6 +98,10 @@ export async function crawlGraph(worker, graph, signal, update) {
     let records;
     let requestCheck;
     let initialPath;
+    let startedNavigation;
+    let differentSnapshot;
+    let snapshotVerified;
+    const self = edge.source === edge.target;
     let after;
     let origin;
     let originReason;
@@ -133,13 +137,22 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
         await runAction(capture, edge, target, jobSignal, {
           observeControl,
-          beforeInput: async () => { after = await capture.cursor(); }
+          beforeInput: async () => {
+            if (self && edge.expectSnapshot && !edge.expectRequests?.length) {
+              differentSnapshot = Boolean(await capture.verify(0, { expectSnapshot: edge.expectSnapshot }));
+            }
+            after = await capture.cursor();
+            startedNavigation = capture.navigationVersion;
+          }
         });
       }
-      observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
+      const afterNavigation = self && !edge.expectRequests?.length && !differentSnapshot ? startedNavigation : undefined;
+      const expect = { expected: edge.target, from: edge.source, timeout, afterNavigation };
+      observed = await awaitScreen(capture, graph, jobSignal, { ...expect, waitForNavigation: redirects });
       ({ records } = await settleRequests(capture, jobSignal));
-      if (!jobSignal.aborted && observed.url !== capture.contents.getURL()) {
-        observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout });
+      if (!jobSignal.aborted && (observed.url !== capture.contents.getURL() ||
+          observed.navigationVersion !== capture.navigationVersion)) {
+        observed = await awaitScreen(capture, graph, jobSignal, expect);
       }
       if (edge.expectRequests && !jobSignal.aborted) {
         const failure = await capture.verify(after ?? 0, { expectRequests: edge.expectRequests });
@@ -150,6 +163,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + observed.pathname;
       } else if (observed.ready && observed.id === edge.target && edge.expectSnapshot && !reason && !jobSignal.aborted) {
         reason = await capture.verify(after ?? 0, { expectSnapshot: edge.expectSnapshot });
+        snapshotVerified = !reason;
       }
       if (edge.action === 'redirect' && !edge.direct && observed.id === edge.target && !reason) {
         reason = 'The destination was observed, but the automatic branch was not proved';
@@ -163,7 +177,12 @@ export async function crawlGraph(worker, graph, signal, update) {
         const actualPath = observed?.pathname;
         // The action is proved by its declared exchanges and observed target.
         // Other responses remain evidence and still block a source thumbnail.
-        const moved = Boolean(actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source));
+        const navigated = startedNavigation !== undefined && observed?.navigationVersion > startedNavigation;
+        const effect = Boolean(self && (requestCheck === 'verified' && edge.expectRequests?.length ||
+          differentSnapshot && snapshotVerified));
+        const moved = Boolean(actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source ||
+          self && navigated));
+        if (self && !moved && !effect) reason = 'No repeated navigation or declared effect was observed';
         const afterAction = after === undefined ? [] : entries.filter(record => record.sequence > after);
         const relevant = record => !edge.expectRequests?.length ||
           edge.expectRequests.some(expected => record.method === expected.method && record.path === expected.path);
@@ -184,6 +203,7 @@ export async function crawlGraph(worker, graph, signal, update) {
           else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
         }
         if (requestCheck) evidence.requestCheck = requestCheck;
+        if (effect && !moved) evidence.actionEffect = true;
         if (actionFailure) evidence.actionFailure = actionFailure;
         if (backgroundFailure) evidence.backgroundFailure = backgroundFailure;
         if (actionPending) evidence.actionPending = true;

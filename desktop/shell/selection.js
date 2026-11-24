@@ -89,6 +89,7 @@ function directionGroup(title, edges, neighborId, neighbors) {
     const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' :
       'Источник стрелки · Экран' + (originReasons[evidence.originReason] ? ' · ' + originReasons[evidence.originReason] : ''));
     if (source) item.append(paragraph(source));
+    if (evidence.actionEffect) item.append(paragraph('Эффект на текущем экране подтверждён'));
     if (evidence.requestCheck) item.append(paragraph(evidence.requestCheck === 'verified'
       ? 'Заявленный обмен подтверждён' : 'Заявленный обмен не подтверждён'));
     if (evidence.backgroundFailure) item.append(paragraph(

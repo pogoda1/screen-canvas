@@ -33,7 +33,11 @@ export async function createCapture(worker, nodeId, role, signal) {
     signal.throwIfAborted();
   }
   const errors = [];
-  const capture = { contents, close, errors, documentVersion: 0 };
+  const capture = { contents, close, errors, documentVersion: 0, navigationVersion: 0 };
+  contents.on('did-navigate', () => { capture.navigationVersion++; });
+  contents.on('did-navigate-in-page', (event, _url, mainFrame) => {
+    if (event.isMainFrame ?? mainFrame) capture.navigationVersion++;
+  });
   contents.on('did-start-navigation', (event, _url, inPlace, mainFrame) => {
     if ((event.isMainFrame ?? mainFrame) && !(event.isSameDocument ?? inPlace)) capture.documentVersion++;
   });
@@ -92,10 +96,10 @@ export async function captureControlFrame(capture, signal) {
 }
 
 function currentLocation(capture) {
-  const { contents, documentVersion } = capture;
+  const { contents, documentVersion, navigationVersion } = capture;
   if (contents.isDestroyed()) return {};
   const url = contents.getURL();
-  return { url, pathname: url ? new URL(url).pathname : undefined, documentVersion };
+  return { url, pathname: url ? new URL(url).pathname : undefined, documentVersion, navigationVersion };
 }
 
 async function readScreen(capture, graph, signal, forCapture, remaining) {
@@ -107,7 +111,8 @@ async function readScreen(capture, graph, signal, forCapture, remaining) {
     `globalThis.__screenCanvasStatus?.(${Boolean(candidate?.index)}, ${forCapture})`
   ), signal, Math.min(350, remaining)).catch(() => undefined);
   const after = currentLocation(capture);
-  if (after.url !== location.url || after.documentVersion !== location.documentVersion) return after;
+  if (after.url !== location.url || after.documentVersion !== location.documentVersion ||
+      after.navigationVersion !== location.navigationVersion) return after;
   return { ...location, status, id: identifyNode(graph, location.pathname, status?.nodeId),
     unmounted: candidate?.index && status?.nodeId !== candidate.id && !status?.mounted };
 }
@@ -128,7 +133,7 @@ function healthy(capture) {
 }
 
 export async function awaitScreen(capture, graph, signal, { expected, from, timeout = 2600,
-  forCapture = false, waitForNavigation = false } = {}) {
+  forCapture = false, waitForNavigation = false, afterNavigation } = {}) {
   if (waitForNavigation) {
     try { await withBudget(capture.navigation, signal, NAVIGATION_MS); }
     catch {
@@ -156,7 +161,8 @@ export async function awaitScreen(capture, graph, signal, { expected, from, time
     const ready = Boolean(status?.ready && !diagnostic);
     last = { ...observation, ready, diagnostic };
     if (status?.failure) return last;
-    if (ready && (id && id === expected || !expected && Date.now() - stableSince > 100 ||
+    if (ready && (id && id === expected && observation.navigationVersion !== afterNavigation ||
+        !expected && Date.now() - stableSince > 100 ||
         id && id !== from && Date.now() - stableSince > 350)) return last;
     await setTimeout(40, undefined, { signal });
   }
@@ -171,6 +177,7 @@ export async function awaitScreen(capture, graph, signal, { expected, from, time
 function sameScreen(expected, observation) {
   return expected.url === observation.url && expected.id === observation.id &&
     expected.documentVersion === observation.documentVersion &&
+    expected.navigationVersion === observation.navigationVersion &&
     expected.status?.documentId === observation.status?.documentId &&
     expected.status?.applied === observation.status?.applied &&
     observation.status?.ready && observation.status?.captureReady && !blocked(observation, true);
