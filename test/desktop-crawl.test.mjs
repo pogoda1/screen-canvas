@@ -507,3 +507,36 @@ test('Chromium rejects frames if an already started local request fails or canno
     assert.doesNotMatch(JSON.stringify(node), /secret=|private response/);
   }
 });
+
+
+test('rebuild keeps a declared redirect card selected once its new evidence arrives', { timeout: 30_000 }, async t => {
+  const folder = await makeHost(t, {
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Navigate, Routes, Route} from 'react-router-dom';
+      function Legal() {
+        const [pending, ready] = React.useState(true);
+        React.useEffect(() => { const timer = setTimeout(() => ready(false), 650); return () => clearTimeout(timer); }, []);
+        return pending ? <h1 aria-busy="true">Loading</h1> : <h1>Terms and conditions</h1>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/terms" element={<Navigate to="/legal" replace/>}/>
+        <Route path="/legal" element={<Legal/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  await waitGraph(shell);
+  const input = shell.getByRole('button', { name: '/terms', exact: true });
+  const legal = "location.pathname === '/legal' && document.querySelector('h1')?.textContent === 'Terms and conditions'";
+  await input.click();
+  const documentId = await waitGuest(electron, '(' + legal + ') && performance.timeOrigin');
+  await shell.getByRole('button', { name: 'Перестроить' }).click();
+  await waitGuest(electron, '(' + legal + ') && performance.timeOrigin > ' + documentId);
+  await shell.locator('#details').getByText('Переход подтверждён', { exact: true }).waitFor();
+  assert.equal(await input.getAttribute('aria-pressed'), 'true');
+  assert.equal(await shell.getByRole('button', { name: '/legal', exact: true }).getAttribute('aria-pressed'), 'false');
+  await shell.locator('#details').getByText('Наблюдалось · route:/legal · /legal', { exact: true }).waitFor();
+});

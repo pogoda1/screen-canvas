@@ -48,6 +48,7 @@ const perform = async action => {
 };
 
 async function open(id, variantId) {
+  rebuildSelection = undefined;
   const revision = ++selection;
   editor?.close();
   editor = undefined;
@@ -147,9 +148,9 @@ async function refresh() {
     }
     if (selected) showNode(details, next.graph, diagnosticSource ?? selected);
     if (rebuilding === undefined && rebuildSelection) {
-      const id = rebuildSelection;
-      rebuildSelection = undefined;
-      if (next.graph?.nodes.some(node => node.id === id)) void open(id);
+      const card = next.graph?.nodes.find(node => node.id === rebuildSelection);
+      if (card?.capture || card && (next.scanCancelled || next.scanError)) void open(card.id);
+      else if (!card) rebuildSelection = undefined;
     }
     refreshBounds();
   } catch (error) {
