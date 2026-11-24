@@ -1,0 +1,13 @@
+{
+  "name": "react-screen-canvas",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Project adapter SDK for Screen Canvas",
+  "exports": {
+    ".": { "types": "./index.d.ts", "default": "./index.mjs" },
+    "./browser": { "types": "./browser.d.ts", "default": "./browser.mjs" },
+    "./prompts/connect.md": "./prompts/connect.md"
+  },
+  "types": "./index.d.ts",
+  "files": ["index.mjs", "index.d.ts", "browser.mjs", "browser.d.ts", "prompts/connect.md"]
+}
