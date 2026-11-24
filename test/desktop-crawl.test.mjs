@@ -44,6 +44,7 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         const record = event => sequence.current.push(event.type);
         const submit = event => {
           record(event);
+          void fetch('/api/telemetry');
           return fetch('/api/answer', { method: 'POST', body: JSON.stringify({
             value:'observed', target:event.target.id, trusted:event.nativeEvent.isTrusted, sequence:sequence.current
           }) }).then(() => setTimeout(() => navigate('/next'), 650));
@@ -138,6 +139,7 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(answer.actualTarget, 'route:/next#index');
   assert.deepEqual(answer.requests.filter(request => request.method === 'POST'),
     [{ method: 'POST', path: '/api/answer', status: 200 }]);
+  assert.ok(answer.requests.some(request => request.path === '/api/telemetry' && request.status === 501));
   assert.match(graph.edges.find(edge => edge.id === 'wrong-answer').evidence.reason, /submitted answer/);
   const wrongDestination = graph.edges.find(edge => edge.id === 'wrong-destination').evidence;
   assert.equal(wrongDestination.status, 'unverified');

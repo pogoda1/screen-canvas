@@ -88,8 +88,8 @@ export async function crawlGraph(worker, graph, signal, update) {
     finally {
       if (!signal.aborted) {
         const requests = localRequests(await capture?.requests() ?? []);
-        const failure = requests.find(request => request.status >= 500);
-        if (failure) reason = failure.method + ' ' + failure.path + ' → ' + failure.status;
+        // The action is proved by its declared exchanges and observed target.
+        // Other responses remain evidence and still block a source thumbnail.
         edge.evidence = edgeEvidence(edge, actual, requests, reason, actualPath);
       }
       await capture?.close();
