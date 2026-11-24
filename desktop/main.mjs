@@ -2,11 +2,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, utilityProcess } from 'electron';
 import { assertJson } from '../core/contracts.mjs';
+import { PreviewController } from './preview.mjs';
 import { ProjectController } from './project-controller.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const shellUrl = 'app://canvas/index.html';
-const shellFiles = new Set(['index.html', 'start.js']);
+const shellFiles = new Set(['index.html', 'start.js', 'preview-slot.js', 'styles.css']);
 const channel = 'canvas:command';
 let window;
 
@@ -21,7 +22,10 @@ function launchWorker(root) {
   return utilityProcess.fork(workerPath, [bootstrap], { cwd: root, env, serviceName: 'Screen Canvas Project' });
 }
 
-const controller = new ProjectController(launchWorker, () => {});
+const preview = new PreviewController(() => window);
+const controller = new ProjectController(launchWorker, state => {
+  if (state.status !== 'ready') void preview.close();
+});
 
 function trusted(event) {
   const contents = window?.webContents;
@@ -34,7 +38,7 @@ ipcMain.handle(channel, async (event, payload) => {
   if (!trusted(event)) throw new Error('Canvas command refused');
   try {
     assertJson(payload);
-    const { command, generation } = payload;
+    const { command, generation, args } = payload;
     if (command === 'state') return { value: controller.state };
     if (command === 'choose') {
       const { canceled, filePaths } = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
@@ -52,11 +56,41 @@ ipcMain.handle(channel, async (event, payload) => {
       await controller.close();
       return { value: null };
     }
+    if (command === 'bounds') {
+      preview.resize(args);
+      return { value: null };
+    }
+    const worker = controller.current;
+    if (!worker || controller.state.status !== 'ready') throw new Error('Project is not ready');
+    if (command === 'open') {
+      if (!validId(args?.nodeId) || (args.variantId !== undefined && !validId(args.variantId))) throw new Error('Invalid screen');
+      return { value: await preview.open(worker, args.nodeId, args.variantId) };
+    }
+    if (command === 'variants') return { value: await worker.call('variants') };
+    if (['patch', 'read', 'requests', 'save', 'loading'].includes(command)) {
+      validatePreviewCommand(command, args);
+      return { value: await preview.dispatch(worker, args.id, command, args) ?? null };
+    }
     throw new Error('Unknown canvas command');
   } catch (error) {
     return { error: { code: typeof error.code === 'string' ? error.code : 'desktop-error', message: error.message } };
   }
 });
+
+function validId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
+}
+
+function validatePreviewCommand(command, args) {
+  if (!validId(args?.id)) throw new Error('Invalid preview session');
+  if (command === 'patch' && (!Array.isArray(args.edits) || args.edits.length > 100 ||
+      JSON.stringify(args.edits).length > 1_048_576 || args.edits.some(edit =>
+        !Array.isArray(edit?.path) || edit.path.length > 32 ||
+        !edit.path.every(key => typeof key === 'string' || Number.isSafeInteger(key))))) throw new Error('Invalid field edit');
+  if (command === 'loading' && typeof args.value !== 'boolean') throw new Error('Invalid loading value');
+  if (command === 'save' && (!validId(args.name) || (args.variantId !== undefined &&
+      (!validId(args.variantId) || !Number.isSafeInteger(args.revision))))) throw new Error('Invalid variant');
+}
 
 function registerShell() {
   protocol.handle('app', request => {
@@ -86,6 +120,7 @@ function createWindow() {
   for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
     contents.on(name, event => event.preventDefault());
   }
+  window.on('resize', () => preview.resize());
   window.on('closed', () => { window = undefined; });
   return window.loadURL(shellUrl);
 }

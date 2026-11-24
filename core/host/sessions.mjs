@@ -76,7 +76,11 @@ export async function openSession({ project, host, generation, scenario, timeout
       if (response.destroyed || disposed) return;
       const registration = protocol.newDocument();
       const html = inject(page, bootstrap, { ...registration, browser: project.adapter.browser ?? null });
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'content-security-policy': "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+      });
       return response.end(html);
     }
     host.middleware(request, response, () => json(response, 404, { error: 'Resource not found' }));

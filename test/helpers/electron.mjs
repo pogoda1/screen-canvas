@@ -25,3 +25,25 @@ export async function pick(electron, shell, folder) {
   }, folder);
   await shell.getByRole('button', { name: 'Открыть проект' }).click();
 }
+
+export async function guestEval(electron, expression) {
+  return electron.evaluate(({ BrowserWindow }, code) => {
+    const window = BrowserWindow.getAllWindows().find(item => item.webContents.getURL().startsWith('app://canvas/'));
+    const guest = window?.contentView.children.map(view => view.webContents)
+      .find(contents => contents?.getURL().startsWith('http://127.0.0.1:'));
+    if (!guest) throw new Error('No live preview');
+    return guest.executeJavaScript(code);
+  }, expression);
+}
+
+export async function waitGuest(electron, expression, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    try {
+      const result = await guestEval(electron, expression);
+      if (result) return result;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 40));
+  }
+  throw new Error('Live preview did not satisfy ' + expression);
+}

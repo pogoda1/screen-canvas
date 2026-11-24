@@ -145,7 +145,8 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       if (result.errors.length) return { errors: result.errors };
       const scenario = { ...current, data: result.value };
       const revision = session.protocol.setScenario(scenario);
-      return { scenario, revision, errors: [] };
+      const reload = args.edits.some(edit => schema.fields?.[edit.path[0]]?.binding?.kind === 'api');
+      return { scenario, revision, reload, errors: [] };
     }
     if (operation === 'save') {
       const snapshot = assertScenario(await session.protocol.read());

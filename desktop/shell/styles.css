@@ -1,0 +1,16 @@
+:root {
+  color-scheme: dark;
+  font: 14px system-ui, sans-serif;
+  color: #e6e8ee;
+  background: #1f242c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { display: flex; align-items: center; gap: .75rem; padding: 1rem 1.25rem; border-bottom: 1px solid #434951; }
+h1 { margin: 0; font-size: 1.35rem; margin-inline-end: auto; }
+button { font: inherit; padding: .5rem .75rem; cursor: pointer; }
+#status { padding-inline: 1.25rem; }
+#workbench { display: grid; grid-template-columns: minmax(17rem, 38%) minmax(20rem, 1fr); height: calc(100vh - 7.5rem); }
+#routes { overflow: auto; margin: 0; padding: 1rem 1.25rem; }
+#routes li { list-style: none; margin-block-end: .35rem; }
+#preview-slot { margin: .5rem 1rem 1rem .5rem; border: 1px solid #434951; min-height: 0; }

@@ -31,6 +31,11 @@ export async function startVite(project) {
         plugins: [{
           name: 'screen-canvas-host',
           enforce: 'post',
+          transform(source, id) {
+            if (!id.endsWith('/vite/dist/client/client.mjs')) return;
+            // Vite still imports this module for CSS helpers with server.hmr disabled.
+            return source.replace('socket = setupWebSocket(socketProtocol, socketHost, fallback);', 'socket = undefined;');
+          },
           config(config) {
             config.server = { ...config.server, middlewareMode: true, host: '127.0.0.1',
               hmr: false, ws: false, open: false, proxy: undefined, watch: null };

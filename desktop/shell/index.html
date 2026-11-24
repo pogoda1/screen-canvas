@@ -5,7 +5,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Screen Canvas</title>
-  <script src="./start.js" defer></script>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./start.js"></script>
 </head>
 <body>
   <header>
@@ -16,7 +17,7 @@
   </header>
   <main>
     <p id="status" role="status"></p>
-    <ul id="routes"></ul>
+    <div id="workbench"><ul id="routes"></ul><div id="preview-slot" aria-label="Живой экран"></div></div>
   </main>
 </body>
 </html>

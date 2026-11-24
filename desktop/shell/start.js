@@ -1,3 +1,5 @@
+import { connectPreviewSlot } from './preview-slot.js';
+
 const api = window.screenCanvas;
 const status = document.querySelector('#status');
 const retry = document.querySelector('#retry');
@@ -11,6 +13,7 @@ const statusText = {
   error: 'Не удалось открыть проект'
 };
 let state;
+const refreshBounds = connectPreviewSlot(api, document.querySelector('#preview-slot'), () => state?.generation);
 const perform = async action => {
   try { await action(); }
   catch (error) { status.textContent = error.message; }
@@ -24,12 +27,16 @@ async function refresh() {
     const next = await api.state();
     if (state?.generation === next.generation && state.status === next.status) return;
     state = next;
+    refreshBounds();
     status.textContent = [next.name, statusText[next.status], next.error].filter(Boolean).join(' · ');
     retry.hidden = next.status !== 'error';
     close.hidden = next.status === 'idle';
     routes.replaceChildren(...(next.graph?.nodes ?? []).map(node => {
       const item = document.createElement('li');
-      item.textContent = node.path;
+      const button = document.createElement('button');
+      button.textContent = node.path;
+      button.addEventListener('click', () => perform(() => api.open(next.generation, node.id)));
+      item.append(button);
       return item;
     }));
   } finally {
