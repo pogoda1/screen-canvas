@@ -1,0 +1,31 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Catalog API", "version": "1.0.0" },
+  "paths": {
+    "/api/products/{id}": {
+      "get": {
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": {
+            "description": "Product",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Product" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Product": {
+        "type": "object",
+        "required": ["id", "title", "stock", "tags"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string", "minLength": 3, "maxLength": 24 },
+          "stock": { "type": "integer", "minimum": 0, "maximum": 99 },
+          "tags": { "type": "array", "maxItems": 4, "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    }
+  }
+}

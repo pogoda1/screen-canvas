@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/runtime"],
+  "workspaces": [
+    "packages/runtime"
+  ],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
