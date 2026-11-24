@@ -266,3 +266,85 @@ test('capture waits for painted content in the current document without gating l
   assert.equal(byId('/steps#first').diagnostics.at(-1).code, 'different-screen');
   assert.ok(byId('/steps#second').screenshot);
 });
+
+test('Chromium reports expected destinations and request failures independently', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      captureRules: [
+        { source:'route:/entry', role:'member', target:'route:/detail/:slug', path:'/detail/first' },
+        { source:'route:/wrong', target:'route:/detail/:slug', path:'/detail/first' },
+        { source:'route:/blocked', target:'route:/detail/:slug', path:'/detail/blocked' },
+        { source:'route:/result', target:'route:/result', path:'/result', state:'Unverified result' }
+      ],
+      scenario: node => node.id === 'route:/entry' ? {mode:'member'} : {},
+      createMocks: () => ({path}) => path === '/api/session' ? {status:401,body:{}} : undefined,
+    };`,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route, useNavigate, useParams} from 'react-router-dom';
+      function Entry({target}) {
+        const navigate = useNavigate();
+        React.useEffect(() => { navigate(target); }, [navigate, target]);
+        return null;
+      }
+      function Detail() {
+        const {slug} = useParams();
+        React.useEffect(() => {
+          if (slug !== 'blocked') return;
+          void fetch('/api/resource?code=secret-query', {headers:{'x-extra':'secret-header'}}).then(() => {
+            const script = document.createElement('script');
+            script.src = 'https://example.invalid/tracker?code=secret-console';
+            document.head.append(script);
+          });
+        }, [slug]);
+        return slug === 'blocked' ? <main aria-busy="true">Loading…</main> : <main><h1>{slug}</h1></main>;
+      }
+      function Signin() {
+        React.useEffect(() => { void fetch('/api/session'); }, []);
+        return <main><h1>Sign in</h1><input aria-label="Email"/></main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/entry" element={<Entry target="/detail/first"/>}/>
+        <Route path="/wrong" element={<Entry target="/detail/second"/>}/>
+        <Route path="/unlisted" element={<Entry target="/detail/first"/>}/>
+        <Route path="/blocked" element={<Entry target="/detail/blocked#secret-fragment"/>}/>
+        <Route path="/detail/:slug" element={<Detail/>}/>
+        <Route path="/result" element={<h1>Unverified result</h1>}/>
+        <Route path="/signin" element={<Signin/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  let state;
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    state = await shell.evaluate(() => screenCanvas.state());
+    if (state.status === 'error') throw new Error(state.error);
+    if (state.progress?.total && state.progress.total === state.progress.completed) break;
+    await new Promise(resolve => setTimeout(resolve, 70));
+  }
+  assert.ok(state.progress?.total);
+  assert.equal(state.progress.completed, state.progress.total);
+  const byPath = pathname => state.graph.nodes.find(node => node.path === pathname);
+  assert.equal(byPath('/entry').capture.transition, 'verified');
+  assert.equal(byPath('/entry').capture.actualPath, '/detail/first');
+  for (const path of ['/wrong', '/unlisted']) {
+    assert.equal(byPath(path).capture.outcome, 'different-screen');
+    assert.equal(byPath(path).screenshot, undefined);
+  }
+  const blocked = byPath('/blocked');
+  assert.equal(blocked.capture.transition, 'observed-url');
+  assert.equal(blocked.capture.targetReady, false);
+  assert.equal(blocked.capture.actualPath, '/detail/blocked');
+  assert.equal(blocked.capture.reason.message, 'GET /api/resource → 501');
+  assert.ok(blocked.capture.observations.some(item => item.code === 'console-csp'), JSON.stringify(blocked.capture));
+  assert.equal(blocked.screenshot, undefined);
+  assert.doesNotMatch(JSON.stringify(blocked), /secret-|example\.invalid/);
+  assert.equal(byPath('/result').capture.state, 'Unverified result');
+  assert.equal(byPath('/result').capture.outcome, 'special-state');
+  assert.ok(byPath('/signin').screenshot);
+  assert.equal(byPath('/signin').capture.outcome, 'captured');
+  assert.deepEqual(byPath('/signin').requests, [{method:'GET',path:'/api/session',status:401}]);
+});

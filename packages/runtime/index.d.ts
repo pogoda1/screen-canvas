@@ -18,6 +18,29 @@ export interface Evidence {
   actualPath?: string;
   requests?: Observation[];
 }
+export interface CaptureRule {
+  source: string;
+  /** Exact scenario mode. If omitted, the rule applies to every mode. */
+  role?: string;
+  target: string;
+  /** Exact local pathname, including concrete parameter values. */
+  path: string;
+  /** Caption for a distinct, intentionally captured product state. */
+  state?: string;
+}
+export interface CaptureEvidence {
+  outcome: 'captured' | 'special-state' | 'transition' | 'blocked' | 'different-screen';
+  phase: 'navigation' | 'readiness' | 'frame' | 'request' | 'complete';
+  expectedNode: string;
+  expectedPath?: string;
+  actualNode?: string;
+  actualPath?: string;
+  targetReady: boolean;
+  transition?: 'verified' | 'observed-url' | 'unexpected';
+  state?: string;
+  reason: Diagnostic;
+  observations: Diagnostic[];
+}
 export interface GraphNode {
   id: string;
   path: string;
@@ -30,6 +53,7 @@ export interface GraphNode {
   component?: string;
   diagnostics?: Diagnostic[];
   screenshot?: string;
+  capture?: CaptureEvidence;
 }
 export interface GraphEdge {
   id: string;
@@ -133,6 +157,7 @@ export interface ProjectAdapter {
   bindings?: Record<string, NonNullable<FieldSchema['binding']>>;
   configure?(context: { load(specifier: string): Promise<Record<string, unknown>> }): void | Promise<void>;
   apiPrefixes?: string[];
+  captureRules?: CaptureRule[];
   nodes?: GraphNode[] | (() => GraphNode[] | Promise<GraphNode[]>);
   actions?: ProjectAction[] | (() => ProjectAction[] | Promise<ProjectAction[]>);
   schema?(node: GraphNode): FieldSchema | undefined | Promise<FieldSchema | undefined>;

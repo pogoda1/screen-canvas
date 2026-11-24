@@ -53,7 +53,8 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       const explicit = await project.adapter.schema?.(node);
       nextSchemas.set(node.id, resolveNodeSchema(sources, operations, project.adapter.bindings, explicit) ?? null);
     }
-    const next = assertJson({ nodes, edges, diagnostics: analysis.diagnostics });
+    const next = assertJson({ nodes, edges, diagnostics: analysis.diagnostics,
+      captureRules: project.adapter.captureRules ?? [] });
     if (disposed || revision !== graphRevision) throw new Error('Scan superseded');
     schemas = nextSchemas;
     graph = next;

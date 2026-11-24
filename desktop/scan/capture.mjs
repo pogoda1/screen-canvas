@@ -40,13 +40,17 @@ export async function createCapture(worker, nodeId, role, signal) {
   contents.on('console-message', (event, level, message) => {
     const error = event.level === 'error' || level === 3;
     const text = event.message ?? message;
-    if (error && typeof text === 'string') errors.push(text.slice(0, 250));
+    if (!error || typeof text !== 'string') return;
+    const code = /content security policy/i.test(text) ? 'console-csp' : 'console-error';
+    if (!errors.includes(code)) errors.push(code);
   });
   const navigation = contents.loadURL(preview.origin + preview.path).catch(error => {
-    if (!signal.aborted && error.errno !== -3) errors.push(error.message);
+    if (!signal.aborted && error.errno !== -3) capture.navigationFailed = true;
   });
   return Object.assign(capture, {
     navigation,
+    mode: preview.scenario.mode,
+    initialPath: new URL(preview.path, preview.origin).pathname,
     cursor: () => worker.call('cursor', { id: preview.id }),
     verify: (after, edge) => worker.call('verify', {
       id: preview.id, after, ...(edge.expectRequests ? { requests: edge.expectRequests } : {}),
@@ -97,7 +101,7 @@ async function readScreen(capture, graph, signal, forCapture, remaining) {
 
 function blocked(observation, forCapture) {
   const { status, unmounted } = observation;
-  if (status?.failure) return { code: 'render-error', message: status.failure };
+  if (status?.failure) return { code: 'render-error', message: 'The application rendered an error screen' };
   if (status?.loading) return { code: 'loading-timeout', message: 'The route still displays a loading screen' };
   if (unmounted) return { code: 'index-unmounted', message: 'The index content was not observed in the shared layout' };
   if (forCapture && status?.ready && !status.captureReady) return {
@@ -120,6 +124,9 @@ export async function awaitScreen(capture, graph, signal, { expected, from, time
       } };
     }
   }
+  if (capture.navigationFailed) return { ...currentLocation(capture), ready: false, diagnostic: {
+    code: 'navigation-failed', message: 'The preview document failed to load'
+  } };
   const deadline = Date.now() + timeout;
   let last = { ready: false };
   let stableSince = Date.now();
@@ -143,7 +150,9 @@ export async function awaitScreen(capture, graph, signal, { expected, from, time
   if (!healthy(capture)) return { ...last, ready: false, diagnostic: {
     code: 'renderer-stopped', message: capture.crash ?? 'The preview window closed'
   } };
-  return { ...last, ready: false };
+  return { ...last, ready: false, diagnostic: last.diagnostic ?? {
+    code: 'not-ready', message: 'No matching content became ready'
+  } };
 }
 
 function sameScreen(expected, observation) {
@@ -155,16 +164,27 @@ function sameScreen(expected, observation) {
 }
 
 async function waitForPaint(contents, signal, budget) {
+  // A pending OSR paint may still contain pre-ready pixels. First let the
+  // document cross a rendering opportunity, then request an offscreen frame.
+  const animations = contents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+  );
+  const pump = setInterval(() => {
+    if (!contents.isDestroyed()) contents.invalidate();
+  }, 32);
   let painted;
-  const frame = new Promise(resolve => {
-    painted = (_event, _dirty, image) => { if (!image.isEmpty()) resolve(); };
-    contents.on('paint', painted);
-  });
   try {
+    const deadline = Date.now() + budget;
+    await withBudget(animations, signal, budget);
+    const frame = new Promise(resolve => {
+      painted = (_event, _dirty, image) => { if (!image.isEmpty()) resolve(); };
+      contents.on('paint', painted);
+    });
     contents.invalidate();
-    await withBudget(frame, signal, budget);
+    await withBudget(frame, signal, deadline - Date.now());
   } finally {
-    contents.removeListener('paint', painted);
+    clearInterval(pump);
+    if (painted) contents.removeListener('paint', painted);
   }
 }
 

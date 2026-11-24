@@ -1,5 +1,5 @@
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { edgeEvidence } from '../../core/graph-evidence.mjs';
+import { captureEvidence, captureExpectation, edgeEvidence, localRequests } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, createCapture, captureScreen } from './capture.mjs';
 import { runAction } from './actions.mjs';
 
@@ -22,25 +22,37 @@ export async function crawlGraph(worker, graph, signal, update) {
 
   async function captureNode(node) {
     let capture;
+    let observed;
+    let screenshot;
+    let expected = { target: node.id, path: node.path, sourcePath: node.path };
+    const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(CAPTURE_JOB_MS)]);
     try {
-      const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(CAPTURE_JOB_MS)]);
       capture = await createCapture(worker, node.id, node.role, jobSignal);
-      const { observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id);
-      signal.throwIfAborted();
-      node.requests = await capture.requests();
-      const failure = node.requests.find(request => request.status >= 500);
-      if (failure) {
-        node.diagnostics.push({ code: 'mock-response', message: failure.method + ' ' + failure.path + ' → ' + failure.status });
+      expected = { ...captureExpectation(graph, node, capture.mode, capture.initialPath),
+        sourcePath: capture.initialPath };
+      const transition = expected.target !== node.id || expected.path !== capture.initialPath;
+      if (transition) {
+        observed = await awaitScreen(capture, graph, jobSignal, {
+          expected: expected.target, timeout: 4000, forCapture: true, waitForNavigation: true
+        });
+      } else {
+        ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
       }
-      if (observed.diagnostic) node.diagnostics.push(observed.diagnostic);
-      else if (observed.id !== node.id || !observed.ready) {
-        const reason = failure ? 'A required mock failed' : observed.id && observed.id !== node.id ? 'Rendered ' + observed.id :
-          capture.errors.length ? capture.errors.at(-1) : 'No matching content became ready';
-        node.diagnostics.push({ code: observed.id && observed.id !== node.id ? 'different-screen' : 'not-ready', message: reason });
-      } else if (!failure) node.screenshot = screenshot;
-    } catch (error) {
-      if (!signal.aborted) node.diagnostics.push({ code: 'capture', message: error.message });
-    } finally { await capture?.close(); }
+    } catch {
+      const url = capture && !capture.contents.isDestroyed() ? capture.contents.getURL() : undefined;
+      observed = { pathname: url ? new URL(url).pathname : undefined, ready: false, diagnostic: {
+        code: capture ? 'frame-not-observed' : 'navigation-timeout',
+        message: capture ? 'The capture job ended before a frame was verified' : 'The preview document could not be opened'
+      } };
+    } finally {
+      if (!signal.aborted) {
+        node.requests = localRequests(await capture?.requests() ?? []);
+        node.capture = captureEvidence(node, expected, observed, screenshot, node.requests, capture?.errors ?? []);
+        if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') node.screenshot = screenshot;
+        else node.diagnostics.push(node.capture.reason);
+      }
+      await capture?.close();
+    }
   }
 
   async function observeEdge(edge) {
@@ -52,18 +64,19 @@ export async function crawlGraph(worker, graph, signal, update) {
     try {
       const target = nodes.get(edge.target);
       if (!target) throw new Error('External destination');
-      capture = await createCapture(worker, edge.source, edge.role, signal);
       const timeout = edge.action === 'adapter' ? 6500 : 2600;
+      const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(2 * timeout + 6500)]);
+      capture = await createCapture(worker, edge.source, edge.role, jobSignal);
       const redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
       if (!redirects) {
-        const source = await awaitScreen(capture, graph, signal, { expected: edge.source, timeout });
+        const source = await awaitScreen(capture, graph, jobSignal, { expected: edge.source, timeout, waitForNavigation: true });
         if (source.id !== edge.source || !source.ready) throw new Error(source.diagnostic?.message ?? 'The source screen was not observed');
         after = await capture.cursor();
-        await runAction(capture, edge, target, signal);
+        await runAction(capture, edge, target, jobSignal);
       }
-      const observed = await awaitScreen(capture, graph, signal, { expected: edge.target, from: edge.source, timeout });
+      const observed = await awaitScreen(capture, graph, jobSignal, { expected: edge.target, from: edge.source, timeout, waitForNavigation: redirects });
       actual = observed.id;
-      const url = capture.contents.getURL();
+      const url = capture.contents.isDestroyed() ? undefined : capture.contents.getURL();
       if (url) actualPath = new URL(url).pathname;
       if (edge.expectedPath && actualPath && !routeMatches(edge.expectedPath, actualPath)) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
@@ -73,7 +86,12 @@ export async function crawlGraph(worker, graph, signal, update) {
       if (!observed.ready) reason = observed.diagnostic?.message ?? 'Target did not become ready';
     } catch (error) { reason = error.message; }
     finally {
-      if (!signal.aborted) edge.evidence = edgeEvidence(edge, actual, await capture?.requests() ?? [], reason, actualPath);
+      if (!signal.aborted) {
+        const requests = localRequests(await capture?.requests() ?? []);
+        const failure = requests.find(request => request.status >= 500);
+        if (failure) reason = failure.method + ' ' + failure.path + ' → ' + failure.status;
+        edge.evidence = edgeEvidence(edge, actual, requests, reason, actualPath);
+      }
       await capture?.close();
     }
   }
