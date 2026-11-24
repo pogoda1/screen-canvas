@@ -1,5 +1,5 @@
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { captureEvidence, captureExpectation, edgeEvidence, localRequests } from '../../core/graph-evidence.mjs';
+import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, createCapture, captureScreen } from './capture.mjs';
 import { runAction } from './actions.mjs';
 
@@ -37,6 +37,8 @@ export async function crawlGraph(worker, graph, signal, update) {
         });
       } else {
         ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
+        const redirect = observedRedirect(graph, node, observed);
+        if (redirect) expected = { ...redirect, sourcePath: capture.initialPath };
       }
     } catch {
       const url = capture && !capture.contents.isDestroyed() ? capture.contents.getURL() : undefined;
@@ -82,6 +84,9 @@ export async function crawlGraph(worker, graph, signal, update) {
         reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
       } else if (observed.ready && actual === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
         reason = await capture.verify(after, edge);
+      }
+      if (edge.action === 'redirect' && !edge.direct && actual === edge.target && !reason) {
+        reason = 'The destination was observed, but the automatic branch was not proved';
       }
       if (!observed.ready) reason = observed.diagnostic?.message ?? 'Target did not become ready';
     } catch (error) { reason = error.message; }

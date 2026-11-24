@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { launchCanvas, pick, waitGuest } from './helpers/electron.mjs';
+import { launchCanvas, pick, waitGraph, waitGuest } from './helpers/electron.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
 test('Chromium captures node content and proves distinct observed actions', { timeout: 45000 }, async t => {
@@ -380,4 +380,47 @@ test('Chromium reports expected destinations and request failures independently'
   assert.equal(await rebuilt.locator('img').count(), 0);
   assert.equal(await rebuilt.getByText('Unverified result').count(), 0);
   await waitGuest(electron, "document.querySelector('main[aria-busy=true]')?.textContent === 'Loading…'");
+});
+
+test('a guarded automatic route keeps a member frame without confirming coincident branches', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Navigate, Routes, Route} from 'react-router-dom';
+      function Member() {
+        const member = location.pathname === '/member';
+        if (member) return <main><h1>Private member content</h1></main>;
+        return <Navigate to="/signin" replace/>;
+      }
+      function Guest() {
+        const bonus = new URLSearchParams(location.search).has('bonus');
+        if (bonus) return <Navigate to="/signin" replace/>;
+        return <Navigate to="/signin" replace/>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/member" element={<Member/>}/>
+        <Route path="/guest" element={<Guest/>}/>
+        <Route path="/signin" element={<h1>Sign-in form</h1>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell);
+  const member = graph.nodes.find(node => node.path === '/member');
+  assert.equal(member.capture.outcome, 'captured');
+  assert.equal(member.capture.actualPath, '/member');
+  assert.ok(member.screenshot?.startsWith('data:image/png;base64,'));
+  const guest = graph.nodes.find(node => node.path === '/guest');
+  assert.equal(guest.capture.outcome, 'transition');
+  assert.equal(guest.capture.actualPath, '/signin');
+  assert.equal(guest.screenshot, undefined);
+  const branches = graph.edges.filter(edge => edge.source === guest.id);
+  assert.equal(branches.length, 2);
+  for (const { evidence } of branches) {
+    assert.equal(evidence.status, 'unverified');
+    assert.equal(evidence.actualPath, '/signin');
+    assert.match(evidence.reason, /branch was not proved/);
+  }
 });

@@ -35,12 +35,18 @@ export function captureExpectation(graph, node, mode, initialPath) {
     graph.nodes.some(target => target.id === item.target && routeMatches(target.path, item.path)));
   const rule = rules.find(item => item.role === mode) ?? rules.find(item => item.role === undefined);
   if (rule) return rule;
-  const redirects = graph.edges.filter(edge => edge.action === 'redirect' && edge.source === node.id &&
-    !edge.condition && exactLocalPath(edge.expectedPath));
+  const redirects = graph.edges.filter(edge => edge.action === 'redirect' && edge.direct && edge.source === node.id && exactLocalPath(edge.expectedPath));
   if (redirects.length === 1) {
     return { target: redirects[0].target, path: redirects[0].expectedPath };
   }
   return { target: node.id, path: initialPath };
+}
+
+export function observedRedirect(graph, node, observed) {
+  if (!observed?.id || observed.id === node.id || !exactLocalPath(observed.pathname)) return;
+  const declared = graph.edges.some(edge => edge.action === 'redirect' && edge.source === node.id &&
+    edge.target === observed.id && edge.expectedPath === observed.pathname);
+  if (declared) return { target: observed.id, path: observed.pathname };
 }
 
 function exactLocalPath(value) {

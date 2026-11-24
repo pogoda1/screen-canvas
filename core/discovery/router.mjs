@@ -92,7 +92,7 @@ export function discoverRoutes(ts, root, sources) {
   }
 
   const edges = [];
-  for (const { node, components } of records) {
+  for (const { node, element, components } of records) {
     const knownActions = new Set();
     for (const component of components) {
       const { checker } = sources.get(component.getSourceFile().fileName);
@@ -118,6 +118,7 @@ export function discoverRoutes(ts, root, sources) {
           source: node.id, target, label: action.label || action.to, action: action.action,
           evidence: { status: 'static' } };
         if (!external) edge.expectedPath = route;
+        if (action.action === 'redirect' && action.node === (element?.openingElement ?? element)) edge.direct = true;
         if (action.condition) edge.condition = action.condition;
         edges.push(edge);
       }

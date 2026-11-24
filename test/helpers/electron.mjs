@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setTimeout } from 'node:timers/promises';
 import { _electron } from 'playwright';
 
 export async function launchCanvas(t, options = {}) {
@@ -46,4 +47,15 @@ export async function waitGuest(electron, expression, timeout = 10_000) {
     await new Promise(resolve => setTimeout(resolve, 40));
   }
   throw new Error('Live preview did not satisfy ' + expression);
+}
+
+export async function waitGraph(shell, timeout = 30_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const state = await shell.evaluate(() => screenCanvas.state());
+    if (state.error || state.scanError) throw new Error(state.error ?? state.scanError);
+    if (state.progress?.total > 0 && state.progress.total === state.progress.completed) return state.graph;
+    await setTimeout(100);
+  }
+  throw new Error('The graph scan did not finish');
 }
