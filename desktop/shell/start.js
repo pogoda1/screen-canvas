@@ -1,3 +1,4 @@
+import { createEditor } from './editor.js';
 import { connectGraph } from './graph.js';
 import { connectDivider } from './layout.js';
 import { connectPreviewSlot } from './preview-slot.js';
@@ -27,6 +28,7 @@ const statusText = {
 let state;
 let selected;
 let selection = 0;
+let disposeEditor;
 const refreshBounds = connectPreviewSlot(api, byId('preview-slot'), () => state?.generation);
 const map = connectGraph(byId('graph'), open);
 connectDivider(divider, workbench, refreshBounds);
@@ -38,6 +40,8 @@ const perform = async action => {
 
 async function open(id, variantId) {
   const revision = ++selection;
+  disposeEditor?.();
+  disposeEditor = undefined;
   selected = id;
   map.select(id);
   showNode(details, state.graph, id);
@@ -49,6 +53,7 @@ async function open(id, variantId) {
   try {
     const result = await api.open(state.generation, id, variantId);
     if (selection !== revision) return;
+    disposeEditor = createEditor(byId('editor'), api, state.generation, result, open, variantId);
     return result;
   } catch (error) {
     if (selection === revision) previewError.textContent = error.message;
@@ -57,6 +62,8 @@ async function open(id, variantId) {
 
 function clearSelection() {
   selection++;
+  disposeEditor?.();
+  disposeEditor = undefined;
   selected = undefined;
   map.select(undefined);
   details.replaceChildren();

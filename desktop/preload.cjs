@@ -20,6 +20,9 @@ contextBridge.exposeInMainWorld('screenCanvas', Object.freeze({
   rebuild: generation => invoke('rebuild', generation),
   cancelScan: generation => invoke('cancel-scan', generation),
   variants: generation => invoke('variants', generation),
-  save: (generation, id, name, update) => invoke('save', generation, { id, name, ...(update ? { variantId: update.id, revision: update.revision } : {}) }),
+  save: (generation, id, name, update, requestId) => invoke('save', generation, {
+    id, name, ...(requestId ? { requestId } : {}), ...(update ? { variantId: update.id, revision: update.revision } : {})
+  }),
+  cancelSave: (generation, id, requestId) => invoke('cancel-save', generation, { id, requestId }),
 
 }));

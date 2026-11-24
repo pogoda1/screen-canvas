@@ -75,7 +75,7 @@ export async function createVariantStore(root, getSchema) {
       .sort().map(name => inspect(dir, name.slice(0, -5))));
   }
 
-  async function save({ id, name, revision, scenario }) {
+  async function save({ id, name, revision, scenario, accept }) {
     const label = cleanName(name);
     if (id !== undefined && !pattern.test(id)) throw new VariantError('id', 'Invalid variant ID');
     const dir = await directory(true);
@@ -111,6 +111,7 @@ export async function createVariantStore(root, getSchema) {
         await handle.close();
       }
       await directory(false);
+      accept?.();
       await rename(temporary, path.join(dir, fileId + '.json'));
       temporary = undefined;
       return value;
@@ -128,7 +129,7 @@ export async function createVariantStore(root, getSchema) {
       const dir = await directory(false);
       return dir ? inspect(dir, id) : { id, status: 'missing' };
     },
-    create: ({ name, scenario }) => save({ name, scenario }),
+    create: ({ name, scenario, accept }) => save({ name, scenario, accept }),
     update: details => {
       if (!pattern.test(details.id)) throw new VariantError('id', 'Invalid variant ID');
       return save(details);

@@ -8,7 +8,7 @@ import { ProjectController } from './project-controller.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const shellUrl = 'app://canvas/index.html';
-const shellFiles = new Set(['index.html', 'start.js', 'preview-slot.js', 'styles.css', 'graph.js', 'layout.js', 'selection.js']);
+const shellFiles = new Set(['index.html', 'start.js', 'preview-slot.js', 'styles.css', 'graph.js', 'layout.js', 'selection.js', 'editor.js', 'variants.js', 'dom.js']);
 const channel = 'canvas:command';
 let window;
 
@@ -117,7 +117,7 @@ ipcMain.handle(channel, async (event, payload) => {
       return { value: null };
     }
     if (command === 'variants') return { value: await worker.call('variants') };
-    if (['patch', 'read', 'requests', 'save', 'loading'].includes(command)) {
+    if (['patch', 'read', 'requests', 'save', 'loading', 'cancel-save'].includes(command)) {
       validatePreviewCommand(command, args);
       return { value: await preview.dispatch(worker, args.id, command, args) ?? null };
     }
@@ -138,6 +138,9 @@ function validatePreviewCommand(command, args) {
         !Array.isArray(edit?.path) || edit.path.length > 32 ||
         !edit.path.every(key => typeof key === 'string' || Number.isSafeInteger(key))))) throw new Error('Invalid field edit');
   if (command === 'loading' && typeof args.value !== 'boolean') throw new Error('Invalid loading value');
+  if ((command === 'save' || command === 'cancel-save') && args.requestId !== undefined && !validId(args.requestId)) {
+    throw new Error('Invalid save request');
+  }
   if (command === 'save' && (!validId(args.name) || (args.variantId !== undefined &&
       (!validId(args.variantId) || !Number.isSafeInteger(args.revision))))) throw new Error('Invalid variant');
 }

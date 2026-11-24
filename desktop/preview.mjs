@@ -82,9 +82,12 @@ export class PreviewController {
     if (!current || current.worker !== worker || current.id !== id) throw new Error('Preview selection expired');
     const result = await worker.call(operation, { ...args, id });
     if (current !== this.current) throw new Error('Preview selection expired');
-    if (operation === 'patch' && result.reload) {
+    const needsReload = operation === 'patch' && result.reload ||
+      operation === 'loading' && args.value && Object.values(current.schema?.fields ?? {})
+        .some(field => field.binding?.kind === 'api');
+    if (needsReload) {
       await worker.call('invalidate', { id });
-      current.view.webContents.reload();
+      if (current === this.current) current.view.webContents.reload();
     }
     return result;
   }

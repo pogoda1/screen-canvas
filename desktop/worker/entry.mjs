@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
-import { assertJson, assertScenario } from '../../core/contracts.mjs';
+import { assertJson, assertScenario, matchesStamp } from '../../core/contracts.mjs';
+import { identifyNode } from '../../core/graph-evidence.mjs';
 import { scanProject } from '../../core/discovery/project.mjs';
 import { makeScenario, scenarioUrl } from '../../core/data/scenario.mjs';
 import { discoverTypeSources } from '../../core/data/typescript.mjs';
@@ -88,6 +89,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       await session.close();
       throw new Error('Project closed');
     }
+    session.saving = new Map();
     sessions.set(session.id, session);
     return { id: session.id, origin: session.origin, path: scenarioUrl(node, scenario), scenario,
       schema: schemas.get(nodeId) };
@@ -134,7 +136,8 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       return session.close();
     }
     if (operation === 'invalidate') return session.protocol.invalidate(args.before);
-    if (operation === 'read') return session.protocol.read();
+    if (operation === 'read') return (await readCurrent(session)).scenario;
+    if (operation === 'cancel-save') return session.saving.get(args.requestId)?.abort(new Error('Save cancelled'));
     if (operation === 'requests') return session.requests;
     if (operation === 'loading') return session.setLoading(args.value === true);
     if (operation === 'patch') {
@@ -149,15 +152,44 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
       return { scenario, revision, reload, errors: [] };
     }
     if (operation === 'save') {
-      const snapshot = assertScenario(await session.protocol.read());
-      requireNode(snapshot.nodeId);
-      if (disposed || sessions.get(args.id) !== session) throw new Error('Preview closed');
-      const schema = schemas.get(snapshot.nodeId);
-      if (schema && validateValue(schema, snapshot.data, '$', true).length) throw new Error('Preview state does not match the current schema');
-      const input = { scenario: snapshot, name: args.name };
-      return args.variantId ? variants.update({ ...input, id: args.variantId, revision: args.revision }) : variants.create(input);
+      const cancellation = new AbortController();
+      const requestId = args.requestId ?? 'save';
+      if (session.saving.has(requestId)) throw new Error('Save is already pending');
+      session.saving.set(requestId, cancellation);
+      try {
+        const { scenario, stamp } = await readCurrent(session, cancellation.signal);
+        const accept = () => {
+          cancellation.signal.throwIfAborted();
+          if (disposed || sessions.get(args.id) !== session || !matchesStamp(stamp, session.protocol.stamp())) {
+            throw new Error('Preview changed before the save completed');
+          }
+        };
+        accept();
+        const input = { scenario, name: args.name, accept };
+        return await (args.variantId ? variants.update({ ...input, id: args.variantId, revision: args.revision }) :
+          variants.create(input));
+      } finally {
+        session.saving.delete(requestId);
+      }
     }
     throw new Error('Unknown worker operation');
+  }
+
+  async function readCurrent(session, signal) {
+    const { scenario: snapshot, pathname, nodeId, stamp } = await session.protocol.read(signal);
+    const observed = typeof pathname === 'string' && pathname.startsWith('/') ?
+      identifyNode(graph, pathname, nodeId) : snapshot.nodeId;
+    if (!observed) throw new Error('The current page does not identify a known screen');
+    const node = requireNode(observed);
+    const scenario = observed === snapshot.nodeId ? snapshot : makeScenario(node, {
+      schema: schemas.get(observed), seed: snapshot.seed, mode: snapshot.mode,
+      params: inferParams(node.path, pathname)
+    });
+    const schema = schemas.get(scenario.nodeId);
+    if (schema && validateValue(schema, scenario.data, '$', true).length) {
+      throw new Error('Preview state does not match the current schema');
+    }
+    return { scenario, stamp };
   }
 
   port.on('message', async message => {
@@ -173,6 +205,14 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     if (message?.operation === 'shutdown') port.exit();
   });
   port.on('disconnect', () => { void shutdown().finally(port.exit); });
+}
+
+function inferParams(pattern, pathname) {
+  const segments = pathname.split('/');
+  return Object.fromEntries(pattern.split('/').flatMap((part, index) => {
+    if (!part.startsWith(':') || !segments[index]) return [];
+    return [[part.slice(1).replace(/\?$/, ''), decodeURIComponent(segments[index])]];
+  }));
 }
 
 if (process.parentPort) {

@@ -58,3 +58,17 @@ progress { width: 64px; height: 7px; accent-color: var(--mint); }
 .edge-details li { padding: .4rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
 .edge-details strong, .edge-details small { display: block; font-size: .75rem; }
 .edge-details small { color: var(--dim); }
+.inspector h3 { margin: 1rem 0 .55rem; font-size: .85rem; font-weight: 650; }
+.inspector button { font-size: .76rem; margin: .15rem .2rem .2rem 0; padding: .3rem .43rem; }
+.inspector input:not([type="checkbox"]), .inspector select { color: inherit; background: #151c24; border: 1px solid #556678; border-radius: 4px; font: inherit; width: 100%; margin-block: .3rem .1rem; padding: .34rem .45rem; }
+.inspector input[type="checkbox"] { display: block; accent-color: var(--mint); }
+.inspector :disabled { opacity: .7; cursor: default; }
+.field { padding: .37rem 0 .25rem; overflow-wrap: anywhere; }
+.field > .field { padding-inline-start: .55rem; margin-inline-start: .22rem; border-inline-start: 1px solid var(--line); }
+.field-title { display: flex; align-items: flex-start; gap: .35rem; justify-content: space-between; font-size: .79rem; }
+.field-title label { min-width: 0; flex: 1; }
+.field-error { display: block; color: #f5ba9b; font-size: .73rem; }
+.read-only, .editor-status, .variant-status { color: var(--dim); font-size: .78rem; overflow-wrap: anywhere; }
+.variants { border-top: 1px solid var(--line); margin-block-start: 1rem; }
+.variant-list { list-style: none; padding: 0; margin: .5rem 0; }
+.variant-list li { margin-block: .1rem; overflow-wrap: anywhere; }

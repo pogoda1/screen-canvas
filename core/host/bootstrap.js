@@ -53,8 +53,10 @@
       } else if (command.type === 'read') {
         try {
           const snapshot = await hook('read', scenario);
-          await send('snapshot', { requestId: command.requestId, scenario: snapshot });
-        } catch { await send('snapshot', { requestId: command.requestId, error: true }); }
+          await send('snapshot', { requestId: command.requestId, scenario: snapshot, pathname: location.pathname, nodeId: await hook('identify') });
+        } catch (error) {
+          await send('snapshot', { requestId: command.requestId, error: error?.message || 'Could not read preview' });
+        }
       }
     }
   }

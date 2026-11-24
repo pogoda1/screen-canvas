@@ -36,11 +36,11 @@ export class DocumentProtocol {
     this.invalidate();
   }
 
-  async waitForCurrent() {
-    const deadline = Date.now() + this.timeout;
+  async waitForCurrent(deadline, signal) {
     while (!this.closed && Date.now() < deadline) {
+      signal?.throwIfAborted();
       if (this.document?.ack === this.revision) return this.document;
-      await setTimeout(20);
+      await setTimeout(20, undefined, { signal });
     }
     throw new Error(this.closed ? 'Preview closed' : 'Timed out waiting for the current preview document');
   }
@@ -62,24 +62,32 @@ export class DocumentProtocol {
     return this.revision;
   }
 
-  async read() {
+  async read(signal) {
     const deadline = Date.now() + this.timeout;
     while (Date.now() < deadline) {
-      const document = await this.waitForCurrent();
+      const document = await this.waitForCurrent(deadline, signal);
+      signal?.throwIfAborted();
       if (this.document !== document || document.ack !== this.revision) continue;
       const id = randomUUID();
       const stamp = this.stamp();
       const snapshot = await new Promise(resolve => {
         const timer = setTimeoutCallback(() => finish(null), Math.max(1, deadline - Date.now()));
+        const abort = () => finish(null);
         const finish = result => {
+          signal?.removeEventListener('abort', abort);
           clearTimeout(timer);
           this.requests.delete(id);
           resolve(result);
         };
         this.requests.set(id, finish);
+        signal?.addEventListener('abort', abort, { once: true });
         this.schedule({ ...stamp, type: 'read', requestId: id });
       });
-      if (snapshot && this.document === document && matchesStamp(stamp, this.stamp())) return snapshot;
+      signal?.throwIfAborted();
+      if (snapshot && this.document === document && matchesStamp(stamp, this.stamp())) {
+        if (snapshot.error) throw new Error(snapshot.error);
+        return { ...snapshot, stamp };
+      }
     }
     throw new Error('Timed out reading state from the current preview document');
   }
@@ -110,8 +118,9 @@ export class DocumentProtocol {
     } else if (message.type === 'snapshot' && doc.ack === this.revision && matchesStamp(message, this.stamp())) {
       const complete = this.requests.get(message.requestId);
       if (!complete) return { status: 409, body: { error: 'Unknown read request' } };
-      if (message.error) return { status: 422, body: { error: 'Preview could not read state' } };
-      complete(assertScenario(message.scenario));
+      if (message.error) complete({ error: typeof message.error === 'string' ?
+        message.error.slice(0, 400) : 'Preview could not read state' });
+      else complete({ scenario: assertScenario(message.scenario), pathname: message.pathname, nodeId: message.nodeId });
     } else return { status: 409, body: { error: 'Unexpected preview message' } };
     return { status: 200, body: null };
   }
