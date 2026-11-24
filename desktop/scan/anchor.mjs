@@ -3,7 +3,9 @@ import { frameRect } from './capture.mjs';
 
 const prefix = 'data:image/png;base64,';
 
-export function matchControl(frame, screenshot, { x, y, box }) {
+export function matchControl(frame, screenshot, { x, y, box }, input) {
+  if (!input.visible || input.x !== x || input.y !== y ||
+      Object.keys(box).some(key => box[key] !== input.box[key])) return;
   if (!frame || !screenshot?.startsWith(prefix)) return;
   const { width, height } = frameRect;
   if (box.width < 4 || box.height < 4 || box.x < 0 || box.y < 0 ||

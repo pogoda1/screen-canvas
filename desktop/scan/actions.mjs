@@ -76,25 +76,32 @@ async function click(contents, query, begin, observeControl) {
     }
     return null;
   })()`);
-  let hit = await locate(false) ?? await locate(true);
-  if (!hit) throw new Error('The action control is unavailable');
-  if (observeControl) {
-    const accept = await observeControl();
-    hit = await locate(false) ?? await locate(true);
+  const find = async () => {
+    const hit = await locate(false) ?? await locate(true);
     if (!hit) throw new Error('The action control is unavailable');
-    if (hit.visible) accept?.(hit);
-  }
-  const point = { x: hit.x, y: hit.y };
+    return hit;
+  };
+  if (observeControl) await find();
+  const accept = observeControl ? await observeControl(() => locate(false)) : undefined;
+  await begin();
+  let hit = await find();
   // Send pointer events to this capture's Chromium target. The renderer picks
   // the actual hit element and dispatches the event through its ancestor path.
   const debuggerSession = contents.debugger;
-  await begin();
   debuggerSession.attach('1.3');
   try {
-    const dispatch = (type, fields) => debuggerSession.sendCommand('Input.dispatchMouseEvent', { type, ...point, ...fields });
+    const dispatch = (type, fields) => debuggerSession.sendCommand('Input.dispatchMouseEvent', {
+      type, x: hit.x, y: hit.y, ...fields
+    });
     await dispatch('mouseMoved');
+    if (accept) {
+      const current = await locate(false);
+      if (!current) throw new Error('The action control is unavailable');
+      hit = current;
+    }
     await dispatch('mousePressed', { button: 'left', buttons: 1, clickCount: 1 });
     await dispatch('mouseReleased', { button: 'left', buttons: 0, clickCount: 1 });
+    accept?.(hit);
   } finally {
     if (!contents.isDestroyed() && debuggerSession.isAttached()) debuggerSession.detach();
   }

@@ -124,15 +124,15 @@ export async function crawlGraph(worker, graph, signal, update) {
         const screenshot = nodes.get(edge.source)?.screenshot;
         const sameScenario = sourceFrame?.key === capture.frameKey && sourceFrame.path === source.pathname;
         originReason = sourceFrame && !sameScenario ? 'different-scenario' : 'control-not-in-frame';
-        const observeControl = sameScenario && screenshot && (async () => {
+        const observeControl = sameScenario && screenshot && (async measure => {
           const ready = await awaitScreen(capture, graph, jobSignal, {
             expected: edge.source, timeout: 1600, forCapture: true
           });
           if (!ready.ready || ready.id !== edge.source || ready.pathname !== source.pathname ||
               ready.documentVersion !== source.documentVersion) return;
-          const frame = await captureControlFrame(capture, jobSignal).catch(() => undefined);
-          if (frame && await currentFrameMatches(capture, graph, jobSignal, ready)) {
-            return hit => { origin = matchControl(frame, screenshot, hit); };
+          const captured = await captureControlFrame(capture, jobSignal, measure).catch(() => undefined);
+          if (captured && await currentFrameMatches(capture, graph, jobSignal, ready)) {
+            return hit => { origin = matchControl(captured.frame, screenshot, captured.hit, hit); };
           }
         });
         await runAction(capture, edge, target, jobSignal, {

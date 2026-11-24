@@ -87,12 +87,14 @@ async function withBudget(operation, signal, ms) {
   finally { listener[Symbol.dispose](); }
 }
 
-export async function captureControlFrame(capture, signal) {
+export async function captureControlFrame(capture, signal, measure) {
   const version = capture.documentVersion;
   const url = capture.contents.getURL();
   await waitForPaint(capture.contents, signal, FRAME_MS);
+  const hit = await measure();
+  if (!hit?.visible) return;
   const frame = await withBudget(capture.contents.capturePage(frameRect), signal, 350);
-  if (capture.documentVersion === version && capture.contents.getURL() === url && !frame.isEmpty()) return frame;
+  if (capture.documentVersion === version && capture.contents.getURL() === url && !frame.isEmpty()) return { frame, hit };
 }
 
 function currentLocation(capture) {
