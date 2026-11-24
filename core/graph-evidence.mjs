@@ -31,11 +31,11 @@ export function containsValue(actual, expected) {
 }
 
 export function captureExpectation(graph, node, mode, initialPath) {
-  const rules = (graph.captureRules ?? []).filter(item => item.source === node.id && exactLocalPath(item.path) &&
+  const rules = (graph.captureRules ?? []).filter(item => item.source === node.id && concreteLocalPath(item.path) &&
     graph.nodes.some(target => target.id === item.target && routeMatches(target.path, item.path)));
   const rule = rules.find(item => item.role === mode) ?? rules.find(item => item.role === undefined);
   if (rule) return rule;
-  const redirects = graph.edges.filter(edge => edge.action === 'redirect' && edge.direct && edge.source === node.id && exactLocalPath(edge.expectedPath));
+  const redirects = graph.edges.filter(edge => edge.action === 'redirect' && edge.direct && edge.source === node.id && concreteLocalPath(edge.expectedPath));
   if (redirects.length === 1) {
     return { target: redirects[0].target, path: redirects[0].expectedPath };
   }
@@ -50,20 +50,34 @@ export function observedRedirect(graph, node, observed) {
 }
 
 function exactLocalPath(value) {
-  return typeof value === 'string' && /^\/(?!\/)[^?#:*]*$/.test(value);
+  return typeof value === 'string' && value.length <= 240 && /^\/(?!\/)[^\s?#\\]*$/.test(value);
+}
+
+function concreteLocalPath(value) {
+  return exactLocalPath(value) && !value.split('/').some(part => part === '*' || part.startsWith(':'));
+}
+
+export function requestFailure(records) {
+  const failed = records.find(request => Number.isInteger(request.status) && request.status >= 500);
+  if (!failed) return;
+  const visible = localRequests([failed])[0];
+  const message = visible ? visible.method + ' ' + visible.path + ' → ' + visible.status :
+    'A local request failed → ' + failed.status;
+  return { code: 'mock-response', message };
 }
 
 export function localRequests(records) {
   return records.filter(({ method, path, status }) =>
-    /^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(method) && exactLocalPath(path) &&
-    path.length <= 240 && Number.isInteger(status)
+    /^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(method) && exactLocalPath(path) && Number.isInteger(status)
   ).slice(-250).map(({ method, path, status }) => ({ method, path, status }));
 }
 
 export function captureEvidence(node, expected, observed, screenshot, requests, consoleCodes) {
-  const failure = requests.find(request => request.status >= 500);
-  const http = failure && { code: 'mock-response', message:
-    failure.method + ' ' + failure.path + ' → ' + failure.status };
+  const http = requestFailure(requests);
+  const pending = !http && requests.some(request => request.status === 0) && {
+    code: 'request-pending', message: 'A local request did not finish within the capture budget'
+  };
+  const failure = http || pending;
   const path = exactLocalPath(observed.pathname) ? observed.pathname : undefined;
   const actualNode = observed.id;
   const matches = actualNode === expected.target && path === expected.path;
@@ -77,7 +91,7 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
   const mismatch = different && { code: 'different-screen', message: 'The observed screen differs from the expected destination' };
   const readyReason = expected.state ? { code: 'special-state', message: expected.state } :
     { code: 'captured', message: 'A rendered frame was verified' };
-  const reason = http || mismatch || observed.diagnostic || (transition === 'verified'
+  const reason = failure || mismatch || observed.diagnostic || (transition === 'verified'
     ? { code: 'expected-transition', message: 'The expected destination became ready' }
     : screenshot && targetReady ? readyReason : { code: 'not-ready', message: 'No matching content became ready' });
   const outcome = failure ? 'blocked' : different ? 'different-screen' :
@@ -86,7 +100,7 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
   const phase = failure ? 'request' :
     reason.code.startsWith('navigation') ? 'navigation' :
     reason.code === 'frame-not-observed' ? 'frame' : targetReady ? 'complete' : 'readiness';
-  const observations = [http, mismatch, observed.diagnostic, ...consoleCodes.map(code => ({
+  const observations = [failure, mismatch, observed.diagnostic, ...consoleCodes.map(code => ({
     code,
     message: code === 'console-csp' ? 'A renderer resource was blocked by Content Security Policy' : 'The renderer logged an error'
   }))].filter(item => item && item !== reason);

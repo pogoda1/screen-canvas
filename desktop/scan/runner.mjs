@@ -1,7 +1,24 @@
+import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect } from '../../core/graph-evidence.mjs';
+import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, createCapture, captureScreen } from './capture.mjs';
 import { runAction } from './actions.mjs';
+
+async function settleRequests(capture, signal) {
+  if (!capture) return [];
+  const deadline = Date.now() + 1500;
+  let records = await capture.requests();
+  while (!signal.aborted && !requestFailure(records) && records.some(request => request.status === 0) &&
+      Date.now() < deadline) {
+    try { await setTimeout(50, undefined, { signal }); }
+    catch { break; }
+    const latest = await capture.requests();
+    // An expired capture may already have closed the worker session.
+    if (!latest.length) break;
+    records = latest;
+  }
+  return records;
+}
 
 export async function crawlGraph(worker, graph, signal, update) {
   const nodes = new Map(graph.nodes.map(node => [node.id, node]));
@@ -48,10 +65,14 @@ export async function crawlGraph(worker, graph, signal, update) {
       } };
     } finally {
       if (!signal.aborted) {
-        node.requests = localRequests(await capture?.requests() ?? []);
-        node.capture = captureEvidence(node, expected, observed, screenshot, node.requests, capture?.errors ?? []);
-        if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') node.screenshot = screenshot;
-        else node.diagnostics.push(node.capture.reason);
+        const records = await settleRequests(capture, jobSignal);
+        if (!signal.aborted) {
+          node.requests = localRequests(records);
+          if (jobSignal.aborted) screenshot = undefined;
+          node.capture = captureEvidence(node, expected, observed, screenshot, records, capture?.errors ?? []);
+          if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') node.screenshot = screenshot;
+          else node.diagnostics.push(node.capture.reason);
+        }
       }
       await capture?.close();
     }
@@ -65,11 +86,12 @@ export async function crawlGraph(worker, graph, signal, update) {
     let after = 0;
     let reason;
     let redirects;
+    let jobSignal;
     try {
       const target = nodes.get(edge.target);
       if (!target) throw new Error('External destination');
       const timeout = edge.action === 'adapter' ? 6500 : 2600;
-      const jobSignal = AbortSignal.any([signal, AbortSignal.timeout(2 * timeout + 6500)]);
+      jobSignal = AbortSignal.any([signal, AbortSignal.timeout(2 * timeout + 6500)]);
       capture = await createCapture(worker, edge.source, edge.role, jobSignal);
       redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
       initialPath = capture.initialPath;
@@ -95,15 +117,18 @@ export async function crawlGraph(worker, graph, signal, update) {
     } catch (error) { reason = error.message; }
     finally {
       if (!signal.aborted) {
-        const requests = localRequests(await capture?.requests() ?? []);
+        const records = redirects ? await settleRequests(capture, jobSignal) : await capture?.requests() ?? [];
+        const requests = localRequests(records);
         // The action is proved by its declared exchanges and observed target.
         // Other responses remain evidence and still block a source thumbnail.
         const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
         if (actualPath && (actualPath !== initialPath || observed?.id && observed.id !== edge.source)) {
           evidence.transitionObserved = true;
-          const failure = redirects && requests.find(request => request.status >= 500);
-          evidence.targetReady = Boolean(observed?.ready && !failure);
-          if (failure) evidence.targetReason = failure.method + ' ' + failure.path + ' → ' + failure.status;
+          const failure = redirects && requestFailure(records);
+          const pending = redirects && records.some(request => request.status === 0);
+          evidence.targetReady = Boolean(observed?.ready && !failure && !pending);
+          if (failure) evidence.targetReason = failure.message;
+          else if (pending) evidence.targetReason = 'A local request did not finish within the capture budget';
           else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
         }
         edge.evidence = evidence;

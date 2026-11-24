@@ -458,3 +458,45 @@ test('the transition panel preserves the actual path and blocked target independ
   await row.getByText('Готовность цели перехода не подтверждена', { exact: true }).waitFor();
   await row.getByText('GET /api/target → 501', { exact: true }).waitFor();
 });
+
+
+test('Chromium rejects frames if an already started local request fails or cannot finish in budget', { timeout: 35_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      createMocks: () => async ({ path }) => {
+        if (path === '/api/delayed') await new Promise(resolve => setTimeout(resolve, 650));
+        if (path === '/api/pending') await new Promise(resolve => setTimeout(resolve, 6500));
+        return {status:501,body:{error:'private response'}};
+      }
+    };`,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route} from 'react-router-dom';
+      function Ready({ api }) {
+        React.useEffect(() => { void fetch(api + '?secret=hidden', { method:'POST' }); }, [api]);
+        return <main><h1>Visible content</h1></main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/fast" element={<Ready api="/api/books:search"/>}/>
+        <Route path="/late" element={<Ready api="/api/delayed"/>}/>
+        <Route path="/timeout" element={<Ready api="/api/pending"/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell);
+  for (const [route, code, reason] of [
+    ['/fast', 'mock-response', 'POST /api/books:search → 501'],
+    ['/late', 'mock-response', 'POST /api/delayed → 501'],
+    ['/timeout', 'request-pending', 'A local request did not finish within the capture budget']
+  ]) {
+    const node = graph.nodes.find(item => item.path === route);
+    assert.equal(node.screenshot, undefined);
+    assert.equal(node.capture.outcome, 'blocked');
+    assert.equal(node.capture.phase, 'request');
+    assert.deepEqual(node.capture.reason, { code, message: reason });
+    assert.doesNotMatch(JSON.stringify(node), /secret=|private response/);
+  }
+});

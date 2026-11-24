@@ -53,3 +53,15 @@ test('request failure outranks a matching destination and secondary console nois
   assert.deepEqual(result.observations.map(item => item.code), ['console-csp']);
   assert.equal(record(complete, observed(complete.target, complete.path), requests.slice(0, 1)).outcome, 'transition');
 });
+
+
+test('failed or pending raw requests block capture without preserving unsafe details', () => {
+  const expected = { target: source.id, path: source.path, sourcePath: source.path };
+  const found = observed(source.id, source.path);
+  const reason = requests => captureEvidence(source, expected, found, 'data:image/png;base64,pixels', requests, []).reason;
+  const records = [{ method: 'POST', path: '/api/books:search', status: 501, body: { token: 'hidden' } }];
+  assert.deepEqual(localRequests(records), [{ method: 'POST', path: '/api/books:search', status: 501 }]);
+  assert.equal(reason(records).message, 'POST /api/books:search → 501');
+  assert.equal(reason([{ method: 'GET', path: '/api/books?key=hidden', status: 501 }]).message, 'A local request failed → 501');
+  assert.equal(reason([{ method: 'GET', path: '/api/books', status: 0 }]).code, 'request-pending');
+});
