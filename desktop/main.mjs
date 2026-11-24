@@ -59,10 +59,8 @@ async function rebuild(worker) {
   const operation = crawling;
   operation?.abort.abort();
   await Promise.allSettled([operation?.done, preview.close()]);
-  const graph = await worker.call('scan', undefined, 25_000);
   if (worker !== controller.current) throw new Error('Project generation expired');
-  crawling = undefined;
-  controller.publish('ready', { name: controller.state.name, graph });
+  await controller.retry();
 }
 
 function trusted(event) {

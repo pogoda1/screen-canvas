@@ -31,6 +31,7 @@ let selection = 0;
 let disposeEditor;
 let activePreview;
 let lastDescription;
+let rebuilding;
 const refreshBounds = connectPreviewSlot(api, byId('preview-slot'), () => state?.generation);
 const map = connectGraph(byId('graph'), open);
 connectDivider(divider, workbench, refreshBounds);
@@ -82,8 +83,17 @@ retry.addEventListener('click', () => perform(() => api.retry(state.generation))
 close.addEventListener('click', () => perform(() => api.close(state.generation)));
 cancel.addEventListener('click', () => perform(() => api.cancelScan(state.generation)));
 rebuild.addEventListener('click', () => perform(async () => {
+  rebuilding = state.generation;
+  byId('graph').inert = true;
+  rebuild.disabled = true;
   clearSelection();
-  await api.rebuild(state.generation);
+  try { await api.rebuild(rebuilding); }
+  catch (error) {
+    byId('graph').inert = false;
+    rebuild.disabled = false;
+    rebuilding = undefined;
+    throw error;
+  }
 }));
 
 async function refresh() {
@@ -99,6 +109,11 @@ async function refresh() {
     retry.hidden = next.status !== 'error';
     close.hidden = next.status === 'idle';
     rebuild.hidden = next.status !== 'ready';
+    if (rebuilding !== undefined && next.generation !== rebuilding && !['starting', 'scanning'].includes(next.status)) {
+      byId('graph').inert = false;
+      rebuild.disabled = false;
+      rebuilding = undefined;
+    }
     const { total, completed } = next.progress ?? {};
     const running = total > completed && !next.scanCancelled && !next.scanError;
     cancel.hidden = !running;
