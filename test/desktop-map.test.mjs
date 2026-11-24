@@ -20,10 +20,11 @@ test('desktop map labels transitions and keeps the latest keyboard or pointer se
   await shell.mouse.up();
   assert.match(await shell.locator('#graph-stage').getAttribute('style'), /translate\(-30px, -20px\)/);
   await shell.getByRole('button', { name: 'Сбросить масштаб' }).click();
-  await shell.getByText('Next screen', { exact: true }).waitFor();
+  assert.equal(await shell.getByText('Next screen', { exact: true }).count(), 0);
   await home.focus();
   await home.press('Enter');
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Home screen'");
+  await shell.locator('#details .edge-details').getByText('Next screen', { exact: true }).waitFor();
   await next.focus();
   await next.press('Enter');
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Next screen'");
