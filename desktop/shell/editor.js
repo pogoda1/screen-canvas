@@ -4,6 +4,7 @@ import { createVariants } from './variants.js';
 export function createEditor(root, api, generation, preview, open, variantId) {
   let data = structuredClone(preview.scenario.data);
   let disposed = false;
+  let screenRevision = 0;
   let timer;
   let inFlight;
   let queued = new Map();
@@ -46,24 +47,26 @@ export function createEditor(root, api, generation, preview, open, variantId) {
   }
 
   async function sendEdits() {
-    while (queued.size && !disposed) {
+    const revision = screenRevision;
+    while (queued.size && !disposed && revision === screenRevision) {
       const edits = [...queued.values()];
       const redraw = dirtyStructure;
       dirtyStructure = false;
       queued = new Map();
       status.textContent = 'Применяем…';
-      await apply(edits);
+      await apply(edits, revision);
+      if (disposed || revision !== screenRevision) return;
       if (redraw && !queued.size && !disposed) render();
       showErrors();
 
     }
   }
 
-  async function apply(edits, retryIndependent = true) {
+  async function apply(edits, revision, retryIndependent = true) {
     let result;
     try { result = await api.patch(generation, preview.id, edits); }
     catch (error) { result = { errors: [{ path: '$', message: error.message }] }; }
-    if (disposed) return;
+    if (disposed || revision !== screenRevision) return;
     if (!result.errors.length) {
       data = result.scenario.data;
       for (const edit of edits) {
@@ -82,7 +85,7 @@ export function createEditor(root, api, generation, preview, open, variantId) {
       if (errors.length) rejected.set(path, { edit, errors });
       else independent.push(edit);
     }
-    if (independent.length && independent.length < edits.length && retryIndependent) await apply(independent, false);
+    if (independent.length && independent.length < edits.length && retryIndependent) await apply(independent, revision, false);
     else for (const edit of independent) rejected.set(displayPath(edit.path), { edit, errors: result.errors });
   }
 
@@ -182,11 +185,25 @@ export function createEditor(root, api, generation, preview, open, variantId) {
     return wrapper;
   }
 
-  return () => {
-    disposed = true;
-    clearTimeout(timer);
-    variants.close();
-    root.replaceChildren();
+  return {
+    follow(next) {
+      screenRevision++;
+      clearTimeout(timer);
+      queued.clear();
+      rejected.clear();
+      dirtyStructure = false;
+      preview = next;
+      data = structuredClone(next.scenario.data);
+      variants.follow(next);
+      render();
+      showErrors();
+    },
+    close() {
+      disposed = true;
+      clearTimeout(timer);
+      variants.close();
+      root.replaceChildren();
+    }
   };
 }
 

@@ -115,7 +115,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     session.schema = editSchema(nodeId, defaults);
     sessions.set(session.id, session);
     return { id: session.id, origin: session.origin, navigationKey: session.navigationKey, path: scenarioUrl(node, scenario), scenario,
-      schema: session.schema };
+      schema: session.schema, reportsIdentity: Boolean(project.adapter.browser) };
   }
 
   async function shutdown() {

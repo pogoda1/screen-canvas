@@ -111,3 +111,39 @@ test('a real isolated preview submits a form and saves the latest fetch-bound re
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Second screen'");
   await assert.rejects(shell.evaluate(({ generation, id }) => screenCanvas.read(generation, id), open), /expired/);
 });
+
+test('a timed-out navigation does not prevent saving after returning in the live view', { timeout: 45_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': "export default { browser: '/src/bindings.js' };",
+    'src/bindings.js': `
+      import { registerBrowserBindings } from 'react-screen-canvas/browser';
+      registerBrowserBindings({ ready: () => Boolean(document.querySelector('h1')) && location.pathname === '/' });
+    `,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Routes, Route} from 'react-router-dom';
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/" element={<main><h1>Ready screen</h1><a href="/slow">Open slow screen</a></main>}/>
+        <Route path="/slow" element={<main><h1>Slow screen</h1><a href="/">Return to ready screen</a></main>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  await shell.getByRole('button', { name: '/', exact: true }).click();
+  const label = shell.getByRole('textbox', { name: 'Имя варианта' });
+  const save = shell.getByRole('button', { name: 'Сохранить', exact: true });
+  await waitGuest(electron, 'document.querySelector("h1")?.textContent === "Ready screen"');
+  await label.fill('Back to the ready screen');
+  await guestEval(electron, 'document.querySelector("a").click()');
+  await waitGuest(electron, 'document.querySelector("h1")?.textContent === "Slow screen"');
+  await save.click();
+  await shell.getByText(/Timed out waiting for the current preview document/).waitFor();
+
+  await guestEval(electron, 'document.querySelector("a").click()');
+  await waitGuest(electron, 'document.querySelector("h1")?.textContent === "Ready screen"');
+  await save.click();
+  await shell.getByText('Вариант сохранён').waitFor();
+  await shell.getByRole('button', { name: 'Back to the ready screen', exact: true }).waitFor();
+});

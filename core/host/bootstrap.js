@@ -64,6 +64,9 @@
       mounted: Boolean(ready && mounted(hint)), applied: revision };
   }
   Object.defineProperty(globalThis, '__screenCanvasStatus', { value: status });
+  if (browser) Object.defineProperty(globalThis, '__screenCanvasIdentity', {
+    value: () => hook('identify')
+  });
 
   async function loop() {
     while (running && !(await status()).ready) await delay(30);

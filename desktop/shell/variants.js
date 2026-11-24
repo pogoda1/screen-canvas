@@ -36,7 +36,8 @@ export function createVariants(api, generation, preview, open, initialId, flush)
         const display = entry.value?.name ?? entry.id;
         if (entry.status === 'ready') {
           item.append(button(display, () => open(entry.value.scenario.nodeId, entry.id)));
-          if (selected === entry.id) {
+          if (selected === entry.id && entry.value.scenario.nodeId === preview.nodeId &&
+              JSON.stringify(entry.value.scenario.params) === JSON.stringify(preview.scenario.params)) {
             active = entry.value;
             name.value = active.name;
             update.hidden = false;
@@ -100,5 +101,13 @@ export function createVariants(api, generation, preview, open, initialId, flush)
     status.textContent = 'Сохранение отменено';
   }
 
-  return { node, close() { closed = true; cancelSave(); } };
+  return {
+    node,
+    follow(next) {
+      preview = next;
+      active = undefined;
+      update.hidden = true;
+    },
+    close() { closed = true; cancelSave(); }
+  };
 }

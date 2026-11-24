@@ -28,7 +28,7 @@ const statusText = {
 let state;
 let selected;
 let selection = 0;
-let disposeEditor;
+let editor;
 let activePreview;
 let lastDescription;
 let rebuilding;
@@ -43,8 +43,8 @@ const perform = async action => {
 
 async function open(id, variantId) {
   const revision = ++selection;
-  disposeEditor?.();
-  disposeEditor = undefined;
+  editor?.close();
+  editor = undefined;
   activePreview = undefined;
   selected = id;
   map.select(id);
@@ -58,7 +58,8 @@ async function open(id, variantId) {
     const result = await api.open(state.generation, id, variantId);
     if (selection !== revision) return;
     activePreview = result.id;
-    disposeEditor = createEditor(byId('editor'), api, state.generation, result, open, variantId);
+    lastDescription = descriptionFingerprint(result);
+    editor = createEditor(byId('editor'), api, state.generation, result, open, variantId);
     return result;
   } catch (error) {
     if (selection === revision) previewError.textContent = error.message;
@@ -67,8 +68,8 @@ async function open(id, variantId) {
 
 function clearSelection() {
   selection++;
-  disposeEditor?.();
-  disposeEditor = undefined;
+  editor?.close();
+  editor = undefined;
   activePreview = undefined;
   selected = undefined;
   map.select(undefined);
@@ -126,13 +127,12 @@ async function refresh() {
       total ? `${completed} из ${total} проверок` : '');
     map.update(next.graph ?? { nodes: [], edges: [] });
     const description = next.live;
-    const fingerprint = description && JSON.stringify([description.id, description.nodeId, description.scenario.params]);
+    const fingerprint = description && descriptionFingerprint(description);
     if (description && description.id === activePreview && fingerprint !== lastDescription) {
       lastDescription = fingerprint;
       selected = description.nodeId;
       map.select(selected);
-      disposeEditor?.();
-      disposeEditor = createEditor(byId('editor'), api, state.generation, description, open);
+      editor?.follow(description);
     }
     if (selected) showNode(details, next.graph, selected);
     refreshBounds();
@@ -141,5 +141,8 @@ async function refresh() {
   } finally {
     setTimeout(refresh, 155);
   }
+}
+function descriptionFingerprint(description) {
+  return JSON.stringify([description.id, description.nodeId, description.scenario.params]);
 }
 void refresh();
