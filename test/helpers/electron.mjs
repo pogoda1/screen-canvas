@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,12 @@ import { _electron } from 'playwright';
 export async function launchCanvas(t, options = {}) {
   const userData = await mkdtemp(path.join(os.tmpdir(), 'screen-canvas-profile-'));
   t.after(() => rm(userData, { recursive: true, force: true }));
+  if (process.env.SCREEN_CANVAS_APP && !options.executablePath) {
+    const app = await realpath(process.env.SCREEN_CANVAS_APP);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'screen-canvas-regression-'));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    options = { cwd, ...options, executablePath: path.join(app, 'Contents', 'MacOS', 'Screen Canvas') };
+  }
   const entry = fileURLToPath(new URL('../../desktop/main.mjs', import.meta.url));
   const electron = await _electron.launch({
     args: [...(options.executablePath ? [] : [entry]), '--user-data-dir=' + userData],
