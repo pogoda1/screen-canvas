@@ -98,8 +98,11 @@
     const observed = { ready, ...(failure ? { failure } : {}), loading, nodeId,
       mounted: Boolean(ready && mounted), applied: revision, documentId: stamp.documentId };
     if (forCapture && ready) {
-      try { observed.captureReady = Boolean(await hook('captureReady', true)); }
-      catch { observed.captureError = true; }
+      try {
+        const checks = await Promise.all(bindings.filter(binding => binding.captureReady)
+          .map(async binding => binding.captureReady()));
+        observed.captureReady = checks.every(result => result === true);
+      } catch { observed.captureError = true; }
     }
     return observed;
   }

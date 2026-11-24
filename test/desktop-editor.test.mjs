@@ -116,28 +116,33 @@ test('a diagnostic card keeps a live form editable and saves and reopens its vis
       import { registerBrowserBindings } from 'react-screen-canvas/browser';
       const field = () => document.querySelector('#live-title');
       registerBrowserBindings({
-        ready: () => Boolean(field()), captureReady: () => false,
+        ready: () => Boolean(field()), captureReady: () => location.pathname === '/reversed',
         apply: scenario => { field().value = scenario.data.title; },
         read: scenario => ({...scenario, data:{title:field().value}})
       });
+      registerBrowserBindings({ captureReady: async () => location.pathname !== '/reversed' });
     `,
     'src/main.jsx': `
       import React from 'react';
       import {createRoot} from 'react-dom/client';
       import {BrowserRouter, Routes, Route} from 'react-router-dom';
       import {getInitialScenario} from 'react-screen-canvas/browser';
+      const form = <main><h1>Editable form</h1>
+        <label>Title<input id="live-title" defaultValue={getInitialScenario()?.data.title}/></label>
+      </main>;
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
-        <Route path="/" element={<main><h1>Editable form</h1>
-          <label>Title<input id="live-title" defaultValue={getInitialScenario()?.data.title}/></label>
-        </main>}/>
+        <Route path="/" element={form}/>
+        <Route path="/reversed" element={form}/>
       </Routes></BrowserRouter>);
     `
   });
   const first = await launchCanvas(t);
   await pick(first.electron, first.shell, folder);
   const card = first.shell.getByRole('button', { name: '/', exact: true });
-  await card.getByText('Снимок недоступен').waitFor();
-  assert.equal(await card.locator('img').count(), 0);
+  for (const node of [card, first.shell.getByRole('button', { name: '/reversed', exact: true })]) {
+    await node.getByText('Снимок недоступен').waitFor();
+    assert.equal(await node.locator('img').count(), 0);
+  }
   await card.click();
   await waitGuest(first.electron, "document.querySelector('#live-title')?.value === 'Original'");
   const value = 'Visible edit 716';
