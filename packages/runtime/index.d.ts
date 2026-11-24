@@ -14,6 +14,8 @@ export interface Evidence {
   status: 'static' | 'confirmed' | 'unverified';
   reason?: string;
   actualTarget?: string;
+  expectedPath?: string;
+  actualPath?: string;
   requests?: Observation[];
 }
 export interface GraphNode {
@@ -38,6 +40,7 @@ export interface GraphEdge {
   role?: string;
   action?: string;
   evidence: Evidence;
+  expectedPath?: string;
 }
 export interface FieldSchema {
   kind: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'unknown';
@@ -86,6 +89,13 @@ export type ActionStep =
   { type: 'fill'; selector: string; value: string } |
   { type: 'press'; selector: string; key: string } |
   { type: 'redirect' };
+export interface ExpectedMockExchange {
+  method: string;
+  path: string;
+  status?: number;
+  body?: Json;
+  response?: Json;
+}
 export interface ProjectAction {
   id: string;
   source: string;
@@ -94,6 +104,9 @@ export interface ProjectAction {
   condition?: string;
   role?: string;
   steps: ActionStep[];
+  expectedPath?: string;
+  expectRequests?: ExpectedMockExchange[];
+  expectSnapshot?: { mode?: string; data?: JsonObject };
 }
 export interface MockRequest {
   method: string;

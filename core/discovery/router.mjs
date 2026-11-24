@@ -123,6 +123,7 @@ export function discoverRoutes(ts, root, sources) {
         const edge = { id: node.id + '@' + source + ':' + action.node.getStart(),
           source: node.id, target, label: action.label || action.to, action: action.action,
           evidence: { status: 'static' } };
+        if (!external) edge.expectedPath = route;
         if (action.condition) edge.condition = action.condition;
         edges.push(edge);
       }

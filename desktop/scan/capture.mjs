@@ -34,6 +34,11 @@ export async function createCapture(worker, nodeId, role, signal) {
   });
   return {
     contents, navigation, close, errors,
+    cursor: () => worker.call('cursor', { id: preview.id }),
+    verify: (after, edge) => worker.call('verify', {
+      id: preview.id, after, ...(edge.expectRequests ? { requests: edge.expectRequests } : {}),
+      ...(edge.expectSnapshot ? { snapshot: edge.expectSnapshot } : {})
+    }),
     requests: () => worker.call('requests', { id: preview.id }).catch(() => [])
   };
 }

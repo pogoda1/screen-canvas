@@ -16,6 +16,8 @@ export async function openSession({ project, host, generation, scenario, timeout
   const sockets = new Set();
   const requests = [];
   const responses = new Map();
+  const exchanges = [];
+  let serial = 0;
   const waiters = new Set();
   let loading = false;
   let disposed = false;
@@ -51,6 +53,7 @@ export async function openSession({ project, host, generation, scenario, timeout
       return json(response, result.status, result.body);
     }
     if ((project.adapter.apiPrefixes ?? ['/api']).some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'))) {
+      const sequence = ++serial;
       const record = { method: request.method, path: pathname, status: 0 };
       if (requests.length >= 250) requests.shift();
       requests.push(record);
@@ -69,6 +72,9 @@ export async function openSession({ project, host, generation, scenario, timeout
         if (result && record.status >= 200 && record.status < 300) {
           if (responses.size >= 250) responses.delete(responses.keys().next().value);
           responses.set(request.method + ' ' + pathname, result.body);
+          if (exchanges.length >= 250) exchanges.shift();
+          exchanges.push({ sequence, method: request.method, path: pathname, status: record.status,
+            body: input.body, response: result.body });
         }
         return json(response, record.status, result?.body ?? { error: 'No local mock for ' + request.method + ' ' + pathname });
       } catch (error) {
@@ -92,7 +98,8 @@ export async function openSession({ project, host, generation, scenario, timeout
   }
 
   return {
-    id, origin, protocol, requests, responses,
+    id, origin, protocol, requests, responses, exchanges,
+    cursor: () => serial,
     setLoading(value) {
       loading = value;
       if (!loading) for (const finish of waiters) finish();

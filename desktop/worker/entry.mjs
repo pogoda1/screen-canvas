@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { assertJson, assertScenario, matchesStamp } from '../../core/contracts.mjs';
-import { identifyNode } from '../../core/graph-evidence.mjs';
+import { containsValue, identifyNode } from '../../core/graph-evidence.mjs';
 import { scanProject } from '../../core/discovery/project.mjs';
 import { makeScenario, scenarioUrl } from '../../core/data/scenario.mjs';
 import { discoverTypeSources } from '../../core/data/typescript.mjs';
@@ -172,6 +172,18 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     if (operation === 'read') return (await readCurrent(session)).scenario;
     if (operation === 'cancel-save') return session.saving.get(args.requestId)?.abort(new Error('Save cancelled'));
     if (operation === 'requests') return session.requests;
+    if (operation === 'cursor') return session.cursor();
+    if (operation === 'verify') {
+      for (const expected of args.requests ?? []) {
+        if (!session.exchanges.some(exchange => exchange.sequence > args.after && containsValue(exchange, expected))) {
+          return 'Expected local response or submitted answer was not observed for ' + expected.method + ' ' + expected.path;
+        }
+      }
+      if (args.snapshot && !containsValue((await readCurrent(session)).scenario, args.snapshot)) {
+        return 'The expected observed UI answer or role did not match';
+      }
+      return null;
+    }
     if (operation === 'loading') return session.setLoading(args.value === true);
     if (operation === 'patch') {
       const current = session.protocol.scenario;

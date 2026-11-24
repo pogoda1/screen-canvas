@@ -1,3 +1,4 @@
+import { routeMatches } from '../../core/discovery/actions.mjs';
 import { edgeEvidence } from '../../core/graph-evidence.mjs';
 import { awaitScreen, createCapture, snapshot } from './capture.mjs';
 import { runAction } from './actions.mjs';
@@ -43,23 +44,34 @@ export async function crawlGraph(worker, graph, signal, update) {
   async function observeEdge(edge) {
     let capture;
     let actual;
+    let actualPath;
+    let after = 0;
     let reason;
     try {
       const target = nodes.get(edge.target);
       if (!target) throw new Error('External destination');
       capture = await createCapture(worker, edge.source, edge.role, signal);
+      const timeout = edge.action === 'adapter' ? 6500 : 2600;
       const redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
       if (!redirects) {
-        const source = await awaitScreen(capture, graph, signal, { expected: edge.source });
-        if (source.id !== edge.source || !source.ready) throw new Error('The source screen was not observed');
+        const source = await awaitScreen(capture, graph, signal, { expected: edge.source, timeout });
+        if (source.id !== edge.source || !source.ready) throw new Error(source.diagnostic?.message ?? 'The source screen was not observed');
+        after = await capture.cursor();
         await runAction(capture, edge, target, signal);
       }
-      const observed = await awaitScreen(capture, graph, signal, { expected: edge.target });
+      const observed = await awaitScreen(capture, graph, signal, { expected: edge.target, timeout });
       actual = observed.id;
+      const url = capture.contents.getURL();
+      if (url) actualPath = new URL(url).pathname;
+      if (edge.expectedPath && actualPath && !routeMatches(edge.expectedPath, actualPath)) {
+        reason = 'Expected ' + edge.expectedPath + ', observed ' + actualPath;
+      } else if (observed.ready && actual === edge.target && (edge.expectRequests || edge.expectSnapshot)) {
+        reason = await capture.verify(after, edge);
+      }
       if (!observed.ready) reason = observed.diagnostic?.message ?? 'Target did not become ready';
     } catch (error) { reason = error.message; }
     finally {
-      if (!signal.aborted) edge.evidence = edgeEvidence(edge, actual, await capture?.requests() ?? [], reason);
+      if (!signal.aborted) edge.evidence = edgeEvidence(edge, actual, await capture?.requests() ?? [], reason, actualPath);
       await capture?.close();
     }
   }

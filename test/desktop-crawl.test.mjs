@@ -5,7 +5,17 @@ import { makeHost } from './helpers/host-fixture.mjs';
 
 test('Chromium captures node content and proves distinct observed actions', { timeout: 45000 }, async t => {
   const folder = await makeHost(t, {
-    'screen-canvas.config.mjs': `export default { actions: [
+    'screen-canvas.config.mjs': `export default {
+      createMocks: () => ({ path }) => path === '/api/answer' ? { body: { ok: true } } : undefined,
+      actions: [
+      { id:'wrong-doc', source:'route:/privacy', target:'route:/legal/:document', label:'Wrong legal document',
+        expectedPath:'/legal/offer', steps:[{type:'redirect'}] },
+      { id:'wrong-answer', source:'route:/', target:'route:/next#index', label:'Wrong answer',
+        expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{value:'expected'}}],
+        steps:[{type:'click',selector:'#answer'}] },
+      { id:'accepted-answer', source:'route:/', target:'route:/next#index', label:'Expected answer',
+        expectRequests:[{method:'POST',path:'/api/answer',status:200,body:{value:'observed'}}],
+        steps:[{type:'click',selector:'#answer'}] },
       { id:'one', source:'route:/', target:'route:/next#index', role:'guest', condition:'One',
         label:'Continue', steps:[{type:'click',selector:'#one'}] },
       { id:'two', source:'route:/', target:'route:/next#index', role:'member', condition:'Two',
@@ -21,7 +31,9 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         const navigate = useNavigate();
         return <main><h1>Home screen</h1><Link to="/next">Next screen</Link>
           <button id="one" onClick={() => navigate('/next')}>One</button>
-          <button id="two" onClick={() => navigate('/next')}>Two</button></main>;
+          <button id="two" onClick={() => navigate('/next')}>Two</button>
+          <button id="answer" onClick={() => fetch('/api/answer', { method: 'POST', body: JSON.stringify({value:'observed'}) })
+            .then(() => navigate('/next'))}>Answer</button></main>;
       }
       function Broken() { throw new Error('Broken route render'); }
       class Boundary extends React.Component {
@@ -35,6 +47,8 @@ test('Chromium captures node content and proves distinct observed actions', { ti
         <Route path="/empty" element={<main><h1>Only layout</h1></main>}>
           <Route index element={<p>Index child without an outlet</p>}/>
         </Route>
+        <Route path="/legal/:document" element={<h1>Legal document</h1>}/>
+        <Route path="/privacy" element={<Navigate to="/legal/privacy" replace/>}/>
         <Route path="/old" element={<Navigate to="/next" replace/>}/>
         <Route path="/next" element={<><h1>Layout</h1><Outlet/></>}>
           <Route index element={<p>Index content</p>}/>
@@ -71,5 +85,11 @@ test('Chromium captures node content and proves distinct observed actions', { ti
   assert.equal(graph.edges.find(edge => edge.action === 'redirect').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.id === 'one').evidence.status, 'confirmed');
   assert.equal(graph.edges.find(edge => edge.id === 'two').evidence.status, 'confirmed');
+  assert.equal(graph.edges.find(edge => edge.id === 'accepted-answer').evidence.status, 'confirmed');
+  assert.match(graph.edges.find(edge => edge.id === 'wrong-answer').evidence.reason, /submitted answer/);
+  const wrongDoc = graph.edges.find(edge => edge.id === 'wrong-doc').evidence;
+  assert.equal(wrongDoc.status, 'unverified');
+  assert.equal(wrongDoc.actualPath, '/legal/privacy');
+  assert.equal(wrongDoc.expectedPath, '/legal/offer');
   assert.match(graph.edges.find(edge => edge.id === 'never').evidence.reason, /unavailable/);
 });

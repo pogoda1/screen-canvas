@@ -32,7 +32,7 @@ export function showNode(details, graph, id) {
   for (const edge of edges) {
     const item = document.createElement('li');
     const label = document.createElement('strong');
-    label.textContent = edge.label + ' → ' + edge.target.replace(/^route:/, '');
+    label.textContent = edge.label + ' → ' + (edge.expectedPath ?? edge.target.replace(/^route:/, ''));
     const evidence = document.createElement('small');
     evidence.textContent = [edge.condition, edge.role, evidenceLabels[edge.evidence.status], edge.evidence.reason].filter(Boolean).join(' · ');
     item.append(label, evidence);
