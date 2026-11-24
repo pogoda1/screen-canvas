@@ -7,11 +7,16 @@
     "packages/runtime"
   ],
   "scripts": {
-    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "build:desktop": "node scripts/build-desktop.mjs",
+    "package:mac": "node scripts/package-mac.mjs",
+    "test:desktop": "node --test --test-concurrency=1 test/desktop-*.test.mjs",
+    "qa:packaged": "node scripts/qa-packaged.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "electron": "45.4.1",
+    "esbuild": "0.21.5",
     "playwright": "1.65.1",
     "react": "18.3.1",
     "react-dom": "18.3.1",

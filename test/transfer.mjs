@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { launchCanvas, pick, guestEval, waitGuest } from './helpers/electron.mjs';
 import { hashFile, prepareBasic, prepareTransfer } from './prepare-transfer.mjs';
@@ -14,7 +15,7 @@ export async function runBasic(t, project, options = {}) {
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'Welcome'");
   await guestEval(electron, "document.querySelector('a').click()");
   await waitGuest(electron, "document.querySelector('h1')?.textContent === 'About this example'");
-  await electron.close();
+  await closeOwned(electron);
 }
 
 export async function runCatalog(t, project, options = {}, revalidate = false) {
@@ -52,7 +53,7 @@ export async function runCatalog(t, project, options = {}, revalidate = false) {
   const filename = files.find(name => name.endsWith('.json'));
   const variant = path.join(directory, filename);
   const before = await hashFile(variant);
-  await first.electron.close();
+  await closeOwned(first.electron);
 
   const second = await start();
   await second.shell.getByRole('button', { name: '/products/:id', exact: true }).click();
@@ -77,7 +78,25 @@ export async function runCatalog(t, project, options = {}, revalidate = false) {
       await writeFile(openapi, initial);
     }
   }
-  await second.electron.close();
+  await closeOwned(second.electron);
+}
+
+async function closeOwned(electron) {
+  const origin = await guestEval(electron, 'location.origin');
+  const processes = await electron.evaluate(({ app }) =>
+    app.getAppMetrics().map(metric => metric.pid));
+  await electron.close();
+  await assert.rejects(fetch(origin));
+  const alive = pid => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+      return false;
+    }
+  };
+  const deadline = Date.now() + 2500;
+  while (processes.some(alive) && Date.now() < deadline) await setTimeout(50);
+  assert.deepEqual(processes.filter(alive), []);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

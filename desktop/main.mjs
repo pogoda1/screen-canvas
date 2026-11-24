@@ -18,8 +18,8 @@ function launchWorker(root) {
   const workerPath = app.isPackaged ? path.join(process.resourcesPath, 'worker', 'entry.mjs') : path.join(directory, 'worker', 'entry.mjs');
   const bootstrap = app.isPackaged ? path.join(process.resourcesPath, 'worker', 'bootstrap.js')
     : path.join(directory, '../core/host/bootstrap.js');
-  const env = Object.fromEntries(['HOME', 'PATH', 'TMPDIR', 'LANG'].flatMap(key =>
-    process.env[key] === undefined ? [] : [[key, process.env[key]]]));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    ['HOME', 'PATH', 'TMPDIR', 'LANG'].includes(key) || key.startsWith('VITE_')));
   return utilityProcess.fork(workerPath, [bootstrap], { cwd: root, env, serviceName: 'Screen Canvas Project' });
 }
 
