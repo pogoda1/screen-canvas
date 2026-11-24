@@ -44,7 +44,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   async function route(request, response) {
     if (disposed || request.headers.host !== new URL(origin).host ||
         (request.headers.origin && request.headers.origin !== origin)) return json(response, 403, { error: 'Origin refused' });
-    const { pathname } = new URL(request.url, origin);
+    const { pathname, search } = new URL(request.url, origin);
     if (pathname === '/__screen_canvas/session') {
       if (request.method !== 'POST' || request.headers['content-type'] !== 'application/json') {
         return json(response, 405, { error: 'Expected a session POST' });
@@ -65,7 +65,7 @@ export async function openSession({ project, host, generation, scenario, timeout
       });
       if (disposed || response.destroyed) return;
       const current = protocol.scenario;
-      const input = { method: request.method, path: pathname, scenario: current };
+      const input = { method: request.method, path: pathname, search, scenario: current };
       if (request.method !== 'GET' && request.method !== 'HEAD') input.body = await body(request);
       try {
         const result = await mock?.(input) ?? generatedMock(input);

@@ -22,7 +22,10 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
       scenario: (node, mode) => ({ data: { label: mode ?? 'first' } }),
       createMocks(scenario) {
         let cursor = 0;
-        return ({ path }) => path === '/api/test' ? { body: { label: scenario.data.label, cursor: ++cursor } } : undefined;
+        return ({ path, search }) => {
+          if (path === '/api/test') return { body: { label: scenario.data.label, cursor: ++cursor } };
+          if (path === '/api/search') return { body: { search } };
+        };
       }
     };`
   });
@@ -52,6 +55,7 @@ test('isolates actual Vite worker listeners, fixtures and document revisions', {
   assert.deepEqual(await api(b.origin), { label: 'second', cursor: 1 });
   assert.deepEqual(await api(a.origin), { label: 'first', cursor: 2 });
   assert.equal((await fetch(b.origin + '/api/unknown')).status, 501);
+  assert.deepEqual(await (await fetch(b.origin + '/api/search?q=a%26b&q=c')).json(), { search: '?q=a%26b&q=c' });
 
   async function document() {
     const page = await (await fetch(a.origin, { headers: { accept: 'text/html', 'x-screen-canvas-navigation': a.navigationKey } })).text();

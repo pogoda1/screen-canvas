@@ -111,6 +111,7 @@ export interface ProjectAction {
 export interface MockRequest {
   method: string;
   path: string;
+  search: string;
   body?: Json;
   scenario: ScenarioV1;
 }
