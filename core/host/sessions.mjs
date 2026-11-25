@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { assertJson } from '../contracts.mjs';
 import { routeMatches } from '../discovery/actions.mjs';
+import { extractResponseTokens, matchesRenderedContent } from '../graph-evidence.mjs';
 import { DocumentProtocol } from './protocol.mjs';
 import { projectPath } from './detect.mjs';
 
@@ -17,6 +18,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   const sockets = new Set();
   const requests = [];
   const responses = new Map();
+  const responseTokens = new Map();
   const exchanges = [];
   let serial = 0;
   let eventSeq = 0;
@@ -106,6 +108,11 @@ export async function openSession({ project, host, generation, scenario, timeout
         if (result && record.status >= 200 && record.status < 300) {
           if (responses.size >= 250) responses.delete(responses.keys().next().value);
           responses.set(request.method + ' ' + pathname, result.body);
+          const tokens = extractResponseTokens(result.body);
+          if (tokens.length) {
+            if (responseTokens.size >= 250) responseTokens.delete(responseTokens.keys().next().value);
+            responseTokens.set(sequence, tokens);
+          }
           if (exchanges.length >= 250) exchanges.shift();
           exchanges.push({ sequence, method: request.method, path: pathname, status: record.status,
             body: input.body, response: result.body });
@@ -156,6 +163,15 @@ export async function openSession({ project, host, generation, scenario, timeout
   return {
     id, origin, protocol, requests, responses, navigationKey, exchanges,
     cursor: () => serial,
+    matchContent(sequences, texts) {
+      if (!Array.isArray(sequences) || !Array.isArray(texts) || !sequences.length || !texts.length) return false;
+      const tokens = [];
+      for (const seq of sequences) {
+        const entry = responseTokens.get(seq);
+        if (entry) tokens.push(...entry);
+      }
+      return matchesRenderedContent(tokens, texts);
+    },
     setLoading(value) {
       loading = value;
       if (!loading) for (const finish of waiters) finish();

@@ -67,7 +67,10 @@ export async function createCapture(worker, nodeId, role, signal) {
     }, timeout), signal, timeout),
     requests: () => worker.call('requests', { id: preview.id }, 1000).catch(() => []),
     requestEvidence: () => contents.isDestroyed() ? Promise.resolve(null) :
-      withBudget(contents.executeJavaScript('globalThis.__screenCanvasRequestEvidence?.()'), signal, 350).catch(() => null)
+      withBudget(contents.executeJavaScript('globalThis.__screenCanvasRequestEvidence?.()'), signal, 350).catch(() => null),
+    visibleContent: () => contents.isDestroyed() ? Promise.resolve([]) :
+      withBudget(contents.executeJavaScript('globalThis.__screenCanvasVisibleContent?.() ?? []'), signal, 350).catch(() => []),
+    matchContent: (sequences, texts) => worker.call('match-content', { id: preview.id, sequences, texts }, 1000).catch(() => false)
   });
 }
 

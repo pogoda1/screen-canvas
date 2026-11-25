@@ -139,6 +139,50 @@
   const visible = element => element.getClientRects().length > 0 &&
     !element.closest('[hidden],[aria-hidden="true"]') && getComputedStyle(element).visibility === 'visible';
   const loadingLabel = text => /^(?:loading|please wait)[\s.…]*$/i.test(text.trim());
+  function hasVisibleText(root) {
+    if (!root || !visible(root)) return false;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      const owner = text.parentElement;
+      if (!text.textContent.trim() || !owner ||
+          owner.closest('script,style,noscript,template,[hidden],[aria-hidden="true"]') ||
+          getComputedStyle(owner).visibility !== 'visible') continue;
+      range.selectNodeContents(text);
+      if (range.getClientRects().length) return true;
+    }
+    return false;
+  }
+  function visibleContent() {
+    const body = document.body;
+    if (!body) return [];
+    const main = [...body.querySelectorAll('main,[role="main"]')].find(visible) ?? body;
+    const indicator = '[aria-busy="true"],[role="status"],[role="progressbar"]';
+    const isLoading = element => element.matches('[aria-busy="true"]') ||
+      loadingLabel(element.getAttribute('aria-label') ?? element.textContent);
+    const values = [];
+    const seen = new Set();
+    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    while (walker.nextNode() && values.length < 120) {
+      const text = walker.currentNode;
+      const owner = text.parentElement;
+      if (!text.textContent.trim() || !owner ||
+          owner.closest('script,style,noscript,template,[hidden],[aria-hidden="true"],[role="alert"],h1') ||
+          getComputedStyle(owner).visibility !== 'visible') continue;
+      const region = owner.closest(indicator);
+      if (region && isLoading(region) || owner.closest('[aria-busy="true"]')) continue;
+      range.selectNodeContents(text);
+      if (!range.getClientRects().length) continue;
+      if (loadingLabel(text.textContent) && loadingLabel(owner.textContent)) continue;
+      const normalized = text.textContent.replace(/\s+/g, ' ').trim();
+      if (normalized.length < 2 || seen.has(normalized)) continue;
+      seen.add(normalized);
+      values.push(normalized.slice(0, 240));
+    }
+    return values;
+  }
   let renderError;
   addEventListener('error', event => {
     if (event instanceof ErrorEvent) renderError = { path: location.pathname, message: event.message || 'Uncaught renderer error' };
@@ -209,7 +253,7 @@
     const error = document.querySelector('[data-screen-canvas-error],vite-error-overlay');
     const failure = error?.textContent.trim().slice(0, 240) || (error && 'The application rendered an error screen') || (renderError?.path === location.pathname ? renderError.message : undefined);
     const { content, loading, mounted } = inspectContent(index);
-    const alert = Boolean(document.body && [...document.body.querySelectorAll('[role="alert"]')].some(visible));
+    const alert = Boolean(document.body && [...document.body.querySelectorAll('[role="alert"]')].some(hasVisibleText));
     const ready = !failure && !loading && Boolean(await hook('ready', content));
     const nodeId = await hook('identify');
     const observed = { ready, ...(failure ? { failure } : {}), loading, ...(alert ? { alert: true } : {}), nodeId,
@@ -225,6 +269,7 @@
     return observed;
   }
   Object.defineProperty(globalThis, '__screenCanvasStatus', { value: status });
+  Object.defineProperty(globalThis, '__screenCanvasVisibleContent', { value: visibleContent });
   if (browser) Object.defineProperty(globalThis, '__screenCanvasIdentity', {
     value: () => hook('identify')
   });

@@ -16,7 +16,7 @@ export const captureLabels = {
 
 export const transitionLabels = {
   verified: 'Переход подтверждён',
-  'observed-url': 'Путь наблюдался, цель не готова',
+  'observed-url': 'Путь наблюдался, готовность цели не подтверждена',
   'source-error': 'Переход после ошибки источника',
   unexpected: 'Незаявленное назначение'
 };

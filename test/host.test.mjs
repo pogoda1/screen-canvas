@@ -147,7 +147,9 @@ test('sessions record verified document/route attribution and settlement order w
   const root = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
       createMocks: () => ({ path }) => path === '/api/items/1' || path === '/api/keepalive' || path === '/api/origin-only'
-        ? { status: 501, body: {} } : { status: 200, body: { ok: true } }
+        ? { status: 501, body: {} }
+        : path === '/api/items' ? { status: 200, body: { items: ['alpha'] } }
+        : { status: 200, body: { ok: true } }
     };`
   });
   const child = fork(new URL('./helpers/node-worker.mjs', import.meta.url), {
@@ -220,5 +222,9 @@ test('sessions record verified document/route attribution and settlement order w
   assert.equal(records[4].sourcePath, '/items');
   assert.equal(records[4].documentId, doc2.stamp.documentId);
   assert.equal(records[4].initialDocument, false);
+  // 7. match-content verifies rendered response tokens without exposing bodies in request logs.
+  assert.equal(records.every(record => !Object.hasOwn(record, 'body') && !Object.hasOwn(record, 'response') && !Object.hasOwn(record, 'tokens')), true);
+  assert.equal(await worker.call('match-content', { id: session.id, sequences: [records[4].sequence], texts: ['alpha'] }), true);
+  assert.equal(await worker.call('match-content', { id: session.id, sequences: [records[4].sequence], texts: ['Не удалось загрузить список'] }), false);
   await worker.stop();
 });

@@ -118,6 +118,59 @@ export function partitionRequests(records, { sourcePath, actualPath, actualDocum
   return { source, target, ambiguous };
 }
 
+const SKIP_TOKEN_KEYS = /^(?:id|code|status|type|kind|role|mode|locale|lang|version|error|token|secret|password|auth|authorization|cookie|session|key|csrf|nonce|signature)$/i;
+const GENERIC_TOKENS = new Set(['ok', 'yes', 'no', 'true', 'false', 'null', 'undefined', 'none', 'default', 'success', 'error', 'loading', 'pending']);
+
+function normalizeContentText(value) {
+  return String(value ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+export function extractResponseTokens(body) {
+  const tokens = [];
+  const seen = new Set();
+  let visited = 0;
+  const walk = (value, depth, key) => {
+    if (visited >= 256 || tokens.length >= 64 || depth > 6 || value == null) return;
+    visited++;
+    if (typeof value === 'string') {
+      if (key && SKIP_TOKEN_KEYS.test(key)) return;
+      const normalized = normalizeContentText(value);
+      if (normalized.length < 2 || normalized.length > 120 || GENERIC_TOKENS.has(normalized)) return;
+      if (/^(?:https?:\/\/|\/|data:|blob:)/.test(normalized)) return;
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized)) return;
+      if (/^\d+(?:[.,:/-]\d+)*$/.test(normalized)) return;
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        tokens.push(normalized);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, depth + 1, undefined);
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const [entryKey, entryValue] of Object.entries(value)) walk(entryValue, depth + 1, entryKey);
+    }
+  };
+  walk(body, 0, undefined);
+  return tokens;
+}
+
+export function matchesRenderedContent(tokens, visibleTexts) {
+  if (!Array.isArray(tokens) || !tokens.length || !Array.isArray(visibleTexts) || !visibleTexts.length) return false;
+  const normalizedTexts = visibleTexts.map(normalizeContentText).filter(text => text.length >= 2);
+  if (!normalizedTexts.length) return false;
+  for (const rawToken of tokens) {
+    const token = normalizeContentText(rawToken);
+    if (token.length < 2) continue;
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp('(?:^|[^\\p{L}\\p{N}_])' + escaped + '(?:$|[^\\p{L}\\p{N}_])', 'u');
+    if (normalizedTexts.some(text => text === token || pattern.test(text))) return true;
+  }
+  return false;
+}
+
 function requestProblem(records) {
   const http = requestFailure(records);
   if (http) return http;
@@ -139,7 +192,8 @@ export function redirectEdgeOutcome(entries, observed, { sourcePath, actualPath 
     ? { code: 'request-pending', message: 'A local request did not finish within the capture budget' }
     : undefined;
   const targetHasSuccess = partitioned.target.some(record => record.status >= 200 && record.status < 300);
-  const targetContentVerified = Boolean(observed?.ready && observed?.status?.contentVerified === true && !observed?.status?.alert);
+  const targetContentVerified = Boolean(observed?.ready && !observed?.status?.alert &&
+    (observed?.status?.contentVerified === true || observed?.responseContentVerified === true));
   const backgroundFailure = targetHttp && !targetPending && targetContentVerified && targetHasSuccess
     ? targetHttp : undefined;
   const targetFailure = backgroundFailure ? undefined : (targetHttp || targetPending);
@@ -178,7 +232,8 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
     ? { code: 'request-pending', message: 'A local request did not finish within the capture budget' }
     : undefined;
   const targetHasSuccess = partitioned.target.some(record => record.status >= 200 && record.status < 300);
-  const targetContentVerified = Boolean(observed.ready && observed.status?.contentVerified === true && !observed.status?.alert);
+  const targetContentVerified = Boolean(observed?.ready && !observed?.status?.alert &&
+    (observed?.status?.contentVerified === true || observed?.responseContentVerified === true));
   const backgroundFailure = changed && targetHttp && !targetPending && targetContentVerified && targetHasSuccess
     ? targetHttp : undefined;
   const targetFailure = backgroundFailure ? undefined : (targetHttp || targetPending);

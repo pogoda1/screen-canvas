@@ -188,6 +188,7 @@ export function attachWorker(port, { root = process.cwd(), bootstrapFile } = {})
     if (operation === 'read') return (await readCurrent(session)).scenario;
     if (operation === 'cancel-save') return session.saving.get(args.requestId)?.abort(new Error('Save cancelled'));
     if (operation === 'requests') return session.requests;
+    if (operation === 'match-content') return session.matchContent(args.sequences, args.texts);
     if (operation === 'cursor') return session.cursor();
     if (operation === 'verify') {
       for (const expected of args.requests ?? []) {

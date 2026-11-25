@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { actionOriginReason, captureEvidence, captureExpectation, edgeEvidence, isMultiStepAction, localRequests, observedRedirect, redirectEdgeOutcome, requestFailure } from '../../core/graph-evidence.mjs';
+import { actionOriginReason, captureEvidence, captureExpectation, edgeEvidence, isMultiStepAction, localRequests, observedRedirect, partitionRequests, redirectEdgeOutcome, requestFailure } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches, refreshScreen } from './capture.mjs';
 import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
@@ -34,6 +34,22 @@ async function enrichRequests(capture, records) {
     }
     return record;
   });
+}
+
+async function verifyRenderedResponse(capture, observed, entries, { sourcePath, actualPath }) {
+  if (!capture || !observed?.ready || observed.status?.alert || observed.status?.contentVerified === true) return observed;
+  const partitioned = partitionRequests(entries, {
+    sourcePath, actualPath, actualDocumentId: observed.status?.documentId
+  });
+  if (!requestFailure(partitioned.target) || partitioned.target.some(record => record.status === 0)) return observed;
+  const sequences = partitioned.target
+    .filter(record => (record.method === 'GET' || record.method === 'HEAD') && record.status >= 200 && record.status < 300 && Number.isInteger(record.sequence))
+    .map(record => record.sequence);
+  if (!sequences.length) return observed;
+  const texts = await capture.visibleContent?.();
+  if (!Array.isArray(texts) || !texts.length) return observed;
+  const matched = await capture.matchContent?.(sequences, texts);
+  return matched ? { ...observed, responseContentVerified: true } : observed;
 }
 
 function sameScreenIdentity(left, right) {
@@ -111,7 +127,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
         settled = await settleRequests(capture, jobSignal);
       }
-      if (!screenshot && !jobSignal.aborted && settled.waited) {
+      if (!screenshot && !jobSignal.aborted && (settled.waited || requestFailure(settled.records))) {
         observed = await refreshScreen(capture, graph, jobSignal, true, true);
       }
       const redirect = expected.inferRedirect && observedRedirect(graph, node, observed);
@@ -130,7 +146,11 @@ export async function crawlGraph(worker, graph, signal, update) {
         if (!signal.aborted) {
           node.requests = localRequests(enriched);
           if (jobSignal.aborted) screenshot = undefined;
-          node.capture = captureEvidence(node, expected, observed, screenshot, enriched, capture?.errors ?? []);
+          const checkedObserved = !jobSignal.aborted && observed?.pathname &&
+            (observed.pathname !== expected.sourcePath || observed.id && observed.id !== node.id)
+            ? await verifyRenderedResponse(capture, observed, enriched, { sourcePath: expected.sourcePath, actualPath: observed.pathname })
+            : observed;
+          node.capture = captureEvidence(node, expected, checkedObserved, screenshot, enriched, capture?.errors ?? []);
           if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') {
             node.screenshot = screenshot;
             frames.set(node.id, { key: capture.frameKey, path: observed.pathname });
@@ -207,7 +227,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         const settled = await settleRequests(capture, jobSignal);
         records = settled.records;
         if (jobSignal.aborted) break;
-        const current = await refreshScreen(capture, graph, jobSignal, settled.waited, redirects);
+        const current = await refreshScreen(capture, graph, jobSignal, settled.waited || Boolean(requestFailure(records)), redirects);
         changed = !sameScreenIdentity(current, observed);
         observed = changed && !current.ready && !current.status?.failure ?
           await awaitScreen(capture, graph, jobSignal, expect) : current;
@@ -264,7 +284,10 @@ export async function crawlGraph(worker, graph, signal, update) {
         if (moved) {
           evidence.transitionObserved = true;
           if (redirects) {
-            Object.assign(evidence, redirectEdgeOutcome(entries, observed, { sourcePath: initialPath, actualPath }));
+            const checkedObserved = !jobSignal?.aborted
+              ? await verifyRenderedResponse(capture, observed, entries, { sourcePath: initialPath, actualPath })
+              : observed;
+            Object.assign(evidence, redirectEdgeOutcome(entries, checkedObserved, { sourcePath: initialPath, actualPath }));
           } else {
             evidence.targetReady = Boolean(observed?.ready);
             if (targetFailure) evidence.targetReason = targetFailure.message;

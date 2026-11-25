@@ -3,10 +3,9 @@ import test from 'node:test';
 import { launchCanvas, pick, waitGraph, waitGuest } from './helpers/electron.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
-test('source error redirect distinguishes pre-navigation failure, late response, unknown XHR order, pending, unattributed requests, and verified automatic redirect telemetry', { timeout: 80_000 }, async t => {
+test('source error redirect distinguishes pre-navigation failure, late response, unknown XHR order, pending, unattributed requests, and neutral automatic redirect telemetry', { timeout: 80_000 }, async t => {
   const folder = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
-      browser: '/bindings.js',
       actions: [
         { id: 'late-target', source: 'route:/', target: 'route:/done', label: 'Late target 501',
           steps: [{ type: 'click', selector: '#late-target' }],
@@ -16,7 +15,8 @@ test('source error redirect distinguishes pre-navigation failure, late response,
           expectRequests: [{ method: 'POST', path: '/api/answer', status: 200 }] }
       ],
       createMocks: () => async ({ path }) => {
-        if (path === '/api/items' || path === '/api/answer' || path === '/api/config') return { status: 200, body: { items: ['alpha'] } };
+        if (path === '/api/items' || path === '/api/answer') return { status: 200, body: { items: ['alpha'] } };
+        if (path === '/api/config') return { status: 200, body: { ok: true } };
         if (path === '/api/broken' || path === '/api/details' || path === '/api/telemetry' ||
             path === '/api/source-late' || path === '/api/origin-fail' || path === '/api/items-fail') {
           await new Promise(resolve => setTimeout(resolve, 650));
@@ -29,17 +29,6 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         return { status: 501, body: {} };
       }
     };`,
-    'bindings.js': `
-      import { registerBrowserBindings } from 'react-screen-canvas/browser';
-      registerBrowserBindings({
-        captureReady() {
-          if (location.pathname === '/items' || location.pathname === '/items-telemetry' || location.pathname === '/items-fail') {
-            return Boolean(document.querySelector('[data-list-item]'));
-          }
-          return true;
-        }
-      });
-    `,
     'src/main.jsx': `
       import React from 'react';
       import {createRoot} from 'react-dom/client';
@@ -120,14 +109,14 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         if (moved) return <Navigate to="/items" replace/>;
         return <div data-screen-canvas-loading>Leaving…</div>;
       }
-      function ItemsList({ withTelemetry = false }) {
+      function ItemsList({ withTelemetry = false, withEmptyAlert = false }) {
         const [items, setItems] = React.useState(null);
         React.useEffect(() => {
           fetch('/api/items').then(response => response.json()).then(data => setItems(data.items));
           if (withTelemetry) void fetch('/api/telemetry');
         }, [withTelemetry]);
         if (!items) return <main data-screen-canvas-loading>Loading list…</main>;
-        return <main><h1>Items</h1><ul>{items.map(item => <li key={item} data-list-item="">{item}</li>)}</ul></main>;
+        return <main><h1>Items</h1><p>{items.join(', ')}</p>{withEmptyAlert && <div role="alert"><span>   </span></div>}</main>;
       }
       function FailedItemsList() {
         const [failed, setFailed] = React.useState(false);
@@ -171,6 +160,7 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         <Route path="/" element={<Home/>}/>
         <Route path="/items" element={<ItemsList/>}/>
         <Route path="/items-telemetry" element={<ItemsList withTelemetry/>}/>
+        <Route path="/items-telemetry-empty-alert" element={<ItemsList withTelemetry withEmptyAlert/>}/>
         <Route path="/items-fail" element={<FailedItemsList/>}/>
         <Route path="/items/:id" element={<ItemDetail/>}/>
         <Route path="/items-unready/:id" element={<UnreadyDetail/>}/>
@@ -179,6 +169,7 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         <Route path="/pending-source" element={<PendingSourceRedirect/>}/>
         <Route path="/unattributed" element={<UnattributedRedirect/>}/>
         <Route path="/auto-telemetry" element={<Navigate to="/items-telemetry" replace/>}/>
+        <Route path="/auto-telemetry-empty-alert" element={<Navigate to="/items-telemetry-empty-alert" replace/>}/>
         <Route path="/auto-list-fail" element={<Navigate to="/items-fail" replace/>}/>
         <Route path="/to-origin" element={<Navigate to="/origin-target" replace/>}/>
         <Route path="/origin-target" element={<OriginTarget/>}/>
@@ -217,6 +208,7 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   await capturePanel.getByText('Переход после ошибки источника', { exact: true }).waitFor();
   await capturePanel.getByText('Назначение готово', { exact: true }).waitFor();
   assert.equal(await capturePanel.getByText('Путь наблюдался, цель не готова').count(), 0);
+  assert.equal(await capturePanel.getByText('Путь наблюдался, готовность цели не подтверждена').count(), 0);
 
   // 2. Pre-navigation source data error -> catch redirect to unready /unready.
   const sourceUnready = byPath('/items-unready/:id');
@@ -276,7 +268,7 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   await shell.getByRole('button', { name: '/unattributed', exact: true }).click();
   await capturePanel.getByText('Путь наблюдался, источник ошибки не определён', { exact: true }).waitFor();
 
-  // 7. Automatic redirect to ready list (200) + background telemetry 501 preserves readiness.
+  // 7. Unchanged neutral positive control (NO SDK/captureReady): automatic redirect to ready list (200 alpha) + background telemetry 501.
   const autoTelemetry = byPath('/auto-telemetry');
   assert.equal(autoTelemetry.screenshot, undefined);
   assert.equal(autoTelemetry.capture.transition, 'verified', JSON.stringify(autoTelemetry.capture));
@@ -289,8 +281,22 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   await shell.getByRole('button', { name: '/auto-telemetry', exact: true }).click();
   await capturePanel.getByText('Фоновая ошибка · GET /api/telemetry → 501', { exact: true }).waitFor();
   await capturePanel.getByText('Переход подтверждён', { exact: true }).waitFor();
+  const autoTelemetryEdgeItem = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · /items-telemetry' });
+  await autoTelemetryEdgeItem.getByText('Цель перехода готова', { exact: true }).waitFor();
+  await autoTelemetryEdgeItem.getByText('Фоновая ошибка · GET /api/telemetry → 501', { exact: true }).waitFor();
 
-  // 8. Paired counterexamples: blocking target list failure (with service 200 + role="alert", and /target-fail -> /broken).
+  // 7b. Empty visible role="alert" (whitespace child) does NOT cancel confirmed readiness.
+  const autoEmptyAlert = byPath('/auto-telemetry-empty-alert');
+  assert.equal(autoEmptyAlert.screenshot, undefined);
+  assert.equal(autoEmptyAlert.capture.transition, 'verified', JSON.stringify(autoEmptyAlert.capture));
+  assert.equal(autoEmptyAlert.capture.targetReady, true);
+  assert.equal(autoEmptyAlert.capture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+  const autoEmptyAlertEdge = graph.edges.find(edge => edge.source === 'route:/auto-telemetry-empty-alert' && edge.target === 'route:/items-telemetry-empty-alert');
+  assert.equal(autoEmptyAlertEdge.evidence.status, 'confirmed', JSON.stringify(autoEmptyAlertEdge.evidence));
+  assert.equal(autoEmptyAlertEdge.evidence.targetReady, true);
+  assert.equal(autoEmptyAlertEdge.evidence.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  // 8. Paired counterexamples (NO SDK/captureReady): blocking target list failure (with service 200 + substantive role="alert", and /target-fail -> /broken).
   const autoListFail = byPath('/auto-list-fail');
   assert.equal(autoListFail.screenshot, undefined);
   assert.equal(autoListFail.capture.transition, 'observed-url');
@@ -301,6 +307,13 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   assert.equal(autoListFailEdge.evidence.targetReady, false);
   assert.equal(autoListFailEdge.evidence.targetReason, 'GET /api/items-fail → 501');
   assert.equal(autoListFailEdge.evidence.backgroundFailure, undefined);
+  await shell.getByRole('button', { name: '/auto-list-fail', exact: true }).click();
+  await capturePanel.getByText('Путь наблюдался, готовность цели не подтверждена', { exact: true }).waitFor();
+  await capturePanel.getByText('GET /api/items-fail → 501', { exact: true }).waitFor();
+  assert.equal(await capturePanel.getByText('Путь наблюдался, цель не готова').count(), 0);
+  const autoListFailEdgeItem = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · /items-fail' });
+  await autoListFailEdgeItem.getByText('Готовность цели перехода не подтверждена', { exact: true }).waitFor();
+  await autoListFailEdgeItem.getByText('GET /api/items-fail → 501', { exact: true }).waitFor();
 
   const targetFail = byPath('/target-fail');
   assert.equal(targetFail.screenshot, undefined);
@@ -423,4 +436,107 @@ test('origin-only Referer, stale keepalive, and unverified service-200 + alert-l
   assert.equal(alertEdge.evidence.targetReady, false, JSON.stringify(alertEdge.evidence));
   assert.equal(alertEdge.evidence.targetReason, 'GET /api/list → 501');
   assert.equal(alertEdge.evidence.backgroundFailure, undefined);
+  await shell.getByRole('button', { name: '/to-alert', exact: true }).click();
+  const panel = shell.locator('#details .capture-details');
+  await panel.getByText('Путь наблюдался, готовность цели не подтверждена', { exact: true }).waitFor();
+  await panel.getByText('GET /api/list → 501', { exact: true }).waitFor();
+  assert.equal(await panel.getByText('Путь наблюдался, цель не готова').count(), 0);
+  const edgeRow = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · /alert-list' });
+  await edgeRow.getByText('Готовность цели перехода не подтверждена', { exact: true }).waitFor();
+  await edgeRow.getByText('GET /api/list → 501', { exact: true }).waitFor();
+});
+
+test('neutral packaged redirect confirms rendered list content with empty alert and keeps service-200 + list-501 alert unconfirmed', { timeout: 55_000 }, async t => {
+  const folder = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      createMocks: () => async ({ path }) => {
+        if (path === '/api/items') return { status: 200, body: { items: ['alpha'] } };
+        if (path === '/api/config') return { status: 200, body: { ok: true } };
+        if (path === '/api/telemetry' || path === '/api/list') {
+          await new Promise(resolve => setTimeout(resolve, 450));
+          return { status: 501, body: {} };
+        }
+        return { status: 501, body: {} };
+      }
+    };`,
+    'src/main.jsx': `
+      import React from 'react';
+      import {createRoot} from 'react-dom/client';
+      import {BrowserRouter, Navigate, Routes, Route} from 'react-router-dom';
+      function ItemsList({ withEmptyAlert = false }) {
+        const [items, setItems] = React.useState(null);
+        React.useEffect(() => {
+          fetch('/api/items').then(response => response.json()).then(data => setItems(data.items));
+          void fetch('/api/telemetry');
+        }, []);
+        if (!items) return <main data-screen-canvas-loading>Loading list…</main>;
+        return <main><h1>Items</h1><p>{items.join(', ')}</p>{withEmptyAlert && <div role="alert"><span>   </span></div>}</main>;
+      }
+      function BrokenList() {
+        const [failed, setFailed] = React.useState(false);
+        React.useEffect(() => {
+          void fetch('/api/config');
+          fetch('/api/list').then(response => { if (!response.ok) setFailed(true); });
+        }, []);
+        return <main><h1>Items</h1>{failed && <p role="alert">Не удалось загрузить список</p>}</main>;
+      }
+      createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
+        <Route path="/" element={<main><h1>Home</h1></main>}/>
+        <Route path="/auto-telemetry" element={<Navigate to="/items-telemetry" replace/>}/>
+        <Route path="/items-telemetry" element={<ItemsList/>}/>
+        <Route path="/auto-empty-alert" element={<Navigate to="/items-empty-alert" replace/>}/>
+        <Route path="/items-empty-alert" element={<ItemsList withEmptyAlert/>}/>
+        <Route path="/auto-list-fail" element={<Navigate to="/items-fail" replace/>}/>
+        <Route path="/items-fail" element={<BrokenList/>}/>
+      </Routes></BrowserRouter>);
+    `
+  });
+  const { electron, shell } = await launchCanvas(t);
+  await pick(electron, shell, folder);
+  const graph = await waitGraph(shell, 45_000);
+  const byPath = pathname => graph.nodes.find(node => node.path === pathname);
+  const capturePanel = shell.locator('#details .capture-details');
+
+  for (const [sourcePath, targetPath] of [
+    ['/auto-telemetry', '/items-telemetry'],
+    ['/auto-empty-alert', '/items-empty-alert']
+  ]) {
+    const node = byPath(sourcePath);
+    assert.equal(node.screenshot, undefined);
+    assert.equal(node.capture.outcome, 'transition', JSON.stringify(node.capture));
+    assert.equal(node.capture.transition, 'verified', JSON.stringify(node.capture));
+    assert.equal(node.capture.targetReady, true);
+    assert.equal(node.capture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+    const edge = graph.edges.find(item => item.source === 'route:' + sourcePath && item.target === 'route:' + targetPath);
+    assert.equal(edge.evidence.status, 'confirmed', JSON.stringify(edge.evidence));
+    assert.equal(edge.evidence.targetReady, true);
+    assert.equal(edge.evidence.backgroundFailure?.message, 'GET /api/telemetry → 501');
+    await shell.getByRole('button', { name: sourcePath, exact: true }).click();
+    await capturePanel.getByText('Переход подтверждён', { exact: true }).waitFor();
+    await capturePanel.getByText('Фоновая ошибка · GET /api/telemetry → 501', { exact: true }).waitFor();
+    const edgeRow = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · ' + targetPath });
+    await edgeRow.getByText('Цель перехода готова', { exact: true }).waitFor();
+    await edgeRow.getByText('Фоновая ошибка · GET /api/telemetry → 501', { exact: true }).waitFor();
+  }
+
+  const failed = byPath('/auto-list-fail');
+  assert.equal(failed.screenshot, undefined);
+  assert.equal(failed.capture.outcome, 'blocked', JSON.stringify(failed.capture));
+  assert.equal(failed.capture.transition, 'observed-url');
+  assert.equal(failed.capture.actualPath, '/items-fail');
+  assert.equal(failed.capture.targetReady, false);
+  assert.equal(failed.capture.backgroundFailure, undefined);
+  assert.equal(failed.capture.reason.message, 'GET /api/list → 501');
+  const failedEdge = graph.edges.find(item => item.source === 'route:/auto-list-fail' && item.target === 'route:/items-fail');
+  assert.equal(failedEdge.evidence.targetReady, false);
+  assert.equal(failedEdge.evidence.targetReason, 'GET /api/list → 501');
+  assert.equal(failedEdge.evidence.backgroundFailure, undefined);
+  await shell.getByRole('button', { name: '/auto-list-fail', exact: true }).click();
+  await capturePanel.getByText('Путь наблюдался, готовность цели не подтверждена', { exact: true }).waitFor();
+  await capturePanel.getByText('Готовность экрана не подтверждена', { exact: true }).waitFor();
+  await capturePanel.getByText('GET /api/list → 501', { exact: true }).waitFor();
+  assert.equal(await capturePanel.getByText('Путь наблюдался, цель не готова').count(), 0);
+  const failedEdgeRow = shell.locator('.edge-details li').filter({ hasText: 'Наблюдаемый путь · /items-fail' });
+  await failedEdgeRow.getByText('Готовность цели перехода не подтверждена', { exact: true }).waitFor();
+  await failedEdgeRow.getByText('GET /api/list → 501', { exact: true }).waitFor();
 });

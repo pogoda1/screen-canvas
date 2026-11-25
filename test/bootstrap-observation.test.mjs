@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { captureEvidence, redirectEdgeOutcome } from '../core/graph-evidence.mjs';
+import { captureEvidence, extractResponseTokens, matchesRenderedContent, redirectEdgeOutcome } from '../core/graph-evidence.mjs';
 import { transitionLabel } from '../desktop/shell/graph.js';
 import { showNode } from '../desktop/shell/selection.js';
 
@@ -52,6 +52,7 @@ function createDomElement(tag, { text = '', attrs = {}, visible = true } = {}) {
         if (part === '[data-screen-canvas-error]') return Object.hasOwn(this._attrs, 'data-screen-canvas-error');
         if (part === 'main') return this.tagName === 'MAIN';
         if (part === '[role="main"]') return this._attrs.role === 'main';
+        if (part === 'h1') return this.tagName === 'H1';
         if (part === 'vite-error-overlay') return this.tagName === 'VITE-ERROR-OVERLAY';
         return false;
       });
@@ -111,14 +112,17 @@ function bootEnvironment({ initialPath = '/old', bodyNodes = [] } = {}) {
   };
   const body = createDomElement('body');
   for (const node of bodyNodes) body.append(node);
-  const textNodes = [];
-  const collectLeaves = node => {
-    for (const child of node.children) {
-      if (!child.children.length && child.textContent) textNodes.push({ textContent: child.textContent, parentElement: child });
-      collectLeaves(child);
-    }
+  const collectTextNodes = root => {
+    const out = [];
+    const walk = node => {
+      if (!node.children.length && node.textContent !== '') {
+        out.push({ textContent: node.textContent, parentElement: node });
+      }
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+    return out;
   };
-  collectLeaves(body);
 
   class FakeXHR {
     constructor() {
@@ -177,11 +181,12 @@ function bootEnvironment({ initialPath = '/old', bodyNodes = [] } = {}) {
       body,
       querySelector: sel => body.querySelector(sel),
       querySelectorAll: sel => body.querySelectorAll(sel),
-      createTreeWalker: () => {
+      createTreeWalker: root => {
+        const nodes = collectTextNodes(root ?? body);
         let idx = -1;
         return {
-          get currentNode() { return textNodes[idx]; },
-          nextNode() { return ++idx < textNodes.length; }
+          get currentNode() { return nodes[idx]; },
+          nextNode() { return ++idx < nodes.length; }
         };
       },
       createRange: () => ({
@@ -281,8 +286,98 @@ test('real bootstrap fetch distinguishes strictly proved before-navigation and a
   assert.equal(afterEnv.sandbox.__screenCanvasRequestEvidence().settlements[afterReqId]?.beforeNavigation, false);
 });
 
-test('real bootstrap status + classifier reject service 200 + list 501 with role="alert" and confirm only explicit content proof', async () => {
-  // Counterexample: neutral page WITHOUT captureReady hook, GET /api/config 200 + GET /api/list 501 + role="alert".
+test('real bootstrap status + visible response content confirm neutral list with empty alert and reject service 200 + list 501 alert', async () => {
+  // 1. Unchanged positive control WITHOUT SDK/captureReady:
+  // GET /api/items -> 200 { items: ['alpha'] }, visible <p>alpha</p>, GET /api/telemetry -> 501.
+  const mainNeutral = createDomElement('main');
+  mainNeutral.append(
+    createDomElement('h1', { text: 'Items' }),
+    createDomElement('p', { text: 'alpha' })
+  );
+  const neutralPositiveEnv = bootEnvironment({ initialPath: '/items-telemetry', bodyNodes: [mainNeutral] });
+  const neutralPositiveStatus = await neutralPositiveEnv.sandbox.__screenCanvasStatus(false, true);
+  assert.equal(neutralPositiveStatus.ready, true);
+  assert.equal(neutralPositiveStatus.alert, undefined);
+  assert.equal(neutralPositiveStatus.contentVerified, undefined);
+  const neutralVisible = Array.from(neutralPositiveEnv.sandbox.__screenCanvasVisibleContent());
+  assert.deepEqual(neutralVisible, ['alpha']);
+  const neutralMatched = matchesRenderedContent(extractResponseTokens({ items: ['alpha'] }), neutralVisible);
+  assert.equal(neutralMatched, true);
+
+  const telemetryRecords = [
+    { sequence: 1, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items-telemetry', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/telemetry', status: 501, sourcePath: '/items-telemetry', documentId: 'doc-1', initialDocument: true }
+  ];
+  const neutralObserved = {
+    id: 'route:/items-telemetry', pathname: '/items-telemetry',
+    ready: neutralPositiveStatus.ready, status: neutralPositiveStatus, responseContentVerified: neutralMatched
+  };
+  const neutralCapture = captureEvidence(
+    { id: 'route:/auto-telemetry', path: '/auto-telemetry' },
+    { target: 'route:/items-telemetry', path: '/items-telemetry', sourcePath: '/auto-telemetry' },
+    neutralObserved, undefined, telemetryRecords, []
+  );
+  assert.equal(neutralCapture.outcome, 'transition');
+  assert.equal(neutralCapture.transition, 'verified');
+  assert.equal(neutralCapture.targetReady, true);
+  assert.equal(neutralCapture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  const neutralEdge = redirectEdgeOutcome(telemetryRecords, neutralObserved, { sourcePath: '/auto-telemetry', actualPath: '/items-telemetry' });
+  assert.equal(neutralEdge.targetReady, true);
+  assert.equal(neutralEdge.targetReason, undefined);
+  assert.equal(neutralEdge.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  const neutralPanel = renderPanel({
+    nodes: [
+      { id: 'route:/auto-telemetry', path: '/auto-telemetry', label: '/auto-telemetry', capture: neutralCapture },
+      { id: 'route:/items-telemetry', path: '/items-telemetry', label: '/items-telemetry' }
+    ],
+    edges: [{
+      id: 'neutral-telemetry-redirect', source: 'route:/auto-telemetry', target: 'route:/items-telemetry', label: '/items-telemetry', action: 'redirect', direct: true,
+      evidence: { status: 'confirmed', actualPath: '/items-telemetry', actualTarget: 'route:/items-telemetry', transitionObserved: true, ...neutralEdge }
+    }]
+  }, 'route:/auto-telemetry');
+  assert.ok(neutralPanel.includes('Переход подтверждён'));
+  assert.ok(neutralPanel.includes('Цель перехода готова'));
+  assert.ok(neutralPanel.includes('Фоновая ошибка · GET /api/telemetry → 501'));
+  assert.ok(!neutralPanel.some(line => line.includes('не готова') || line.includes('не подтверждена')));
+
+  // 2. Empty visible role="alert" (whitespace text + empty child) must NOT cancel confirmed readiness.
+  const mainEmptyAlert = createDomElement('main');
+  const emptyAlert = createDomElement('div', { attrs: { role: 'alert' } });
+  emptyAlert.append(createDomElement('span', { text: '   ' }));
+  mainEmptyAlert.append(
+    createDomElement('h1', { text: 'Items' }),
+    createDomElement('p', { text: 'alpha' }),
+    emptyAlert,
+    createDomElement('div', { attrs: { role: 'alert' } })
+  );
+  const emptyAlertEnv = bootEnvironment({ initialPath: '/items-telemetry', bodyNodes: [mainEmptyAlert] });
+  const emptyAlertStatus = await emptyAlertEnv.sandbox.__screenCanvasStatus(false, true);
+  assert.equal(emptyAlertStatus.ready, true);
+  assert.equal(emptyAlertStatus.alert, undefined);
+  const emptyAlertVisible = Array.from(emptyAlertEnv.sandbox.__screenCanvasVisibleContent());
+  assert.deepEqual(emptyAlertVisible, ['alpha']);
+  const emptyAlertMatched = matchesRenderedContent(extractResponseTokens({ items: ['alpha'] }), emptyAlertVisible);
+  assert.equal(emptyAlertMatched, true);
+  const emptyAlertObserved = {
+    id: 'route:/items-telemetry', pathname: '/items-telemetry',
+    ready: emptyAlertStatus.ready, status: emptyAlertStatus, responseContentVerified: emptyAlertMatched
+  };
+  const emptyAlertCapture = captureEvidence(
+    { id: 'route:/auto-telemetry', path: '/auto-telemetry' },
+    { target: 'route:/items-telemetry', path: '/items-telemetry', sourcePath: '/auto-telemetry' },
+    emptyAlertObserved, undefined, telemetryRecords, []
+  );
+  assert.equal(emptyAlertCapture.transition, 'verified');
+  assert.equal(emptyAlertCapture.targetReady, true);
+  assert.equal(emptyAlertCapture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+  const emptyAlertEdge = redirectEdgeOutcome(telemetryRecords, emptyAlertObserved, { sourcePath: '/auto-telemetry', actualPath: '/items-telemetry' });
+  assert.equal(emptyAlertEdge.targetReady, true);
+  assert.equal(emptyAlertEdge.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  // 3. Paired negative control WITHOUT SDK/captureReady:
+  // GET /api/config -> 200 { ok: true }, GET /api/list -> 501, heading + substantive visible role="alert".
   const mainAlert = createDomElement('main');
   mainAlert.append(
     createDomElement('h1', { text: 'Список' }),
@@ -293,12 +388,16 @@ test('real bootstrap status + classifier reject service 200 + list 501 with role
   assert.equal(alertStatus.ready, true);
   assert.equal(alertStatus.alert, true);
   assert.equal(alertStatus.contentVerified, undefined);
+  const alertVisible = Array.from(neutralEnv.sandbox.__screenCanvasVisibleContent());
+  assert.deepEqual(alertVisible, []);
+  const alertMatched = matchesRenderedContent(extractResponseTokens({ ok: true }), alertVisible);
+  assert.equal(alertMatched, false);
 
   const counterRecords = [
     { sequence: 1, method: 'GET', path: '/api/config', status: 200, sourcePath: '/list', documentId: 'doc-1', initialDocument: true },
     { sequence: 2, method: 'GET', path: '/api/list', status: 501, sourcePath: '/list', documentId: 'doc-1', initialDocument: true }
   ];
-  const alertObserved = { id: 'route:/list', pathname: '/list', ready: alertStatus.ready, status: alertStatus };
+  const alertObserved = { id: 'route:/list', pathname: '/list', ready: alertStatus.ready, status: alertStatus, responseContentVerified: alertMatched };
   const alertCapture = captureEvidence(
     { id: 'route:/old', path: '/old' },
     { target: 'route:/list', path: '/list', sourcePath: '/old' },
@@ -325,18 +424,23 @@ test('real bootstrap status + classifier reject service 200 + list 501 with role
       evidence: { status: 'confirmed', actualPath: '/list', actualTarget: 'route:/list', transitionObserved: true, ...alertEdge }
     }]
   }, 'route:/old');
-  assert.ok(alertPanel.includes('Путь наблюдался, цель не готова'));
+  assert.ok(alertPanel.includes('Путь наблюдался, готовность цели не подтверждена'));
+  assert.ok(alertPanel.includes('Готовность экрана не подтверждена'));
   assert.ok(alertPanel.includes('Готовность цели перехода не подтверждена'));
   assert.ok(alertPanel.includes('GET /api/list → 501'));
+  assert.ok(!alertPanel.includes('Путь наблюдался, цель не готова'));
   assert.ok(!alertPanel.includes('Переход подтверждён'));
   assert.ok(!alertPanel.includes('Цель перехода готова'));
   assert.ok(!alertPanel.some(line => line.startsWith('Фоновая ошибка')));
 
-  // Positive control: explicit adapter captureReady proves list item is rendered (no alert), 200 list + 501 telemetry.
+  // 4. Explicit adapter captureReady still proves list readiness (with empty alert allowed, substantive alert still blocking).
   const mainList = createDomElement('main');
+  const emptyAdapterAlert = createDomElement('div', { attrs: { role: 'alert' } });
+  emptyAdapterAlert.append(createDomElement('span', { text: ' ' }));
   mainList.append(
     createDomElement('h1', { text: 'Список' }),
-    createDomElement('p', { text: 'Alpha item' })
+    createDomElement('p', { text: 'Alpha item' }),
+    emptyAdapterAlert
   );
   const verifiedEnv = bootEnvironment({ initialPath: '/list', bodyNodes: [mainList] });
   const bridge = verifiedEnv.sandbox[Symbol.for('react-screen-canvas.browser')];
@@ -346,7 +450,7 @@ test('real bootstrap status + classifier reject service 200 + list 501 with role
   assert.equal(verifiedStatus.contentVerified, true);
   assert.equal(verifiedStatus.alert, undefined);
 
-  const telemetryRecords = [
+  const verifiedRecords = [
     { sequence: 1, method: 'GET', path: '/api/list', status: 200, sourcePath: '/list', documentId: 'doc-1', initialDocument: true },
     { sequence: 2, method: 'GET', path: '/api/telemetry', status: 501, sourcePath: '/list', documentId: 'doc-1', initialDocument: true }
   ];
@@ -354,30 +458,10 @@ test('real bootstrap status + classifier reject service 200 + list 501 with role
   const verifiedCapture = captureEvidence(
     { id: 'route:/old', path: '/old' },
     { target: 'route:/list', path: '/list', sourcePath: '/old' },
-    verifiedObserved, undefined, telemetryRecords, []
+    verifiedObserved, undefined, verifiedRecords, []
   );
   assert.equal(verifiedCapture.outcome, 'transition');
   assert.equal(verifiedCapture.transition, 'verified');
   assert.equal(verifiedCapture.targetReady, true);
   assert.equal(verifiedCapture.backgroundFailure?.message, 'GET /api/telemetry → 501');
-
-  const verifiedEdge = redirectEdgeOutcome(telemetryRecords, verifiedObserved, { sourcePath: '/old', actualPath: '/list' });
-  assert.equal(verifiedEdge.targetReady, true);
-  assert.equal(verifiedEdge.targetReason, undefined);
-  assert.equal(verifiedEdge.backgroundFailure?.message, 'GET /api/telemetry → 501');
-
-  const verifiedPanel = renderPanel({
-    nodes: [
-      { id: 'route:/old', path: '/old', label: '/old', capture: verifiedCapture },
-      { id: 'route:/list', path: '/list', label: '/list' }
-    ],
-    edges: [{
-      id: 'telemetry-redirect', source: 'route:/old', target: 'route:/list', label: '/list', action: 'redirect', direct: true,
-      evidence: { status: 'confirmed', actualPath: '/list', actualTarget: 'route:/list', transitionObserved: true, ...verifiedEdge }
-    }]
-  }, 'route:/old');
-  assert.ok(verifiedPanel.includes('Переход подтверждён'));
-  assert.ok(verifiedPanel.includes('Цель перехода готова'));
-  assert.ok(verifiedPanel.includes('Фоновая ошибка · GET /api/telemetry → 501'));
-  assert.ok(!verifiedPanel.includes('Путь наблюдался, цель не готова'));
 });

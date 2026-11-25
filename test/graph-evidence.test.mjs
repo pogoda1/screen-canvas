@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { actionOriginReason, captureEvidence, captureExpectation, isMultiStepAction, localRequests, partitionRequests, redirectEdgeOutcome } from '../core/graph-evidence.mjs';
+import { actionOriginReason, captureEvidence, captureExpectation, extractResponseTokens, isMultiStepAction, localRequests, matchesRenderedContent, partitionRequests, redirectEdgeOutcome } from '../core/graph-evidence.mjs';
 
 const source = { id: 'route:/entry', path: '/entry' };
 const complete = { source: source.id, role: 'complete', target: 'route:/detail/:slug', path: '/detail/first' };
@@ -339,4 +339,43 @@ test('ambiguous, full-document and same-URL request attribution require verified
   assert.equal(sameUrl.targetReady, false);
   assert.equal(sameUrl.sourceFailure, undefined);
   assert.equal(sameUrl.transition, undefined);
+});
+
+test('response content matching confirms visible response data while ignoring service flags, secrets, and alert screens', () => {
+  assert.deepEqual(extractResponseTokens({ items: ['alpha'] }), ['alpha']);
+  assert.deepEqual(extractResponseTokens({ ok: true, status: 'ok', token: 'secret-value', version: '1.2.3' }), []);
+  assert.equal(matchesRenderedContent(extractResponseTokens({ items: ['alpha'] }), ['alpha']), true);
+  assert.equal(matchesRenderedContent(extractResponseTokens({ items: ['alpha'] }), ['alpha, beta']), true);
+  assert.equal(matchesRenderedContent(extractResponseTokens({ items: ['alpha'] }), ['alphabet']), false);
+  assert.equal(matchesRenderedContent(extractResponseTokens({ ok: true }), ['Не удалось загрузить список']), false);
+
+  const records = [
+    { sequence: 1, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/telemetry', status: 501, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const renderedObserved = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1' }, responseContentVerified: true };
+  const capture = captureEvidence(
+    { id: 'route:/old', path: '/old' },
+    { target: 'route:/items', path: '/items', sourcePath: '/old' },
+    renderedObserved, undefined, records, []
+  );
+  assert.equal(capture.outcome, 'transition');
+  assert.equal(capture.transition, 'verified');
+  assert.equal(capture.targetReady, true);
+  assert.equal(capture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  const edge = redirectEdgeOutcome(records, renderedObserved, { sourcePath: '/old', actualPath: '/items' });
+  assert.equal(edge.targetReady, true);
+  assert.equal(edge.backgroundFailure?.message, 'GET /api/telemetry → 501');
+
+  // Visible substantive alert overrides responseContentVerified.
+  const alerted = { ...renderedObserved, status: { documentId: 'doc-1', alert: true } };
+  const alertCapture = captureEvidence(
+    { id: 'route:/old', path: '/old' },
+    { target: 'route:/items', path: '/items', sourcePath: '/old' },
+    alerted, undefined, records, []
+  );
+  assert.equal(alertCapture.targetReady, false);
+  assert.equal(alertCapture.backgroundFailure, undefined);
+  assert.equal(alertCapture.reason.message, 'GET /api/telemetry → 501');
 });

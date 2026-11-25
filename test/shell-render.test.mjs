@@ -232,7 +232,7 @@ test('selection panel and transition labels separate source-error redirects, tar
   };
 
   assert.equal(transitionLabel(sourceReadyNode.capture), 'Переход после ошибки источника');
-  assert.equal(transitionLabel(targetFailNode.capture), 'Путь наблюдался, цель не готова');
+  assert.equal(transitionLabel(targetFailNode.capture), 'Путь наблюдался, готовность цели не подтверждена');
   assert.equal(transitionLabel(ambiguousNode.capture), 'Путь наблюдался, источник ошибки не определён');
 
   withFakeDocument(container => {
@@ -264,6 +264,7 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(all.includes('Наблюдалось · route:/items · /items'));
     assert.ok(all.includes('Назначение готово'));
     assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    assert.ok(!all.includes('Путь наблюдался, готовность цели не подтверждена'));
     const edgeTexts = texts(findEdgeRows(container).get('catch-redirect'));
     assert.ok(edgeTexts.includes('Цель перехода готова'));
     assert.ok(edgeTexts.includes('Ошибка источника · GET /api/items/id-1 → 501'));
@@ -304,6 +305,7 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(all.includes('Путь наблюдался, источник ошибки не определён'));
     assert.ok(all.includes('Готовность экрана не подтверждена'));
     assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    assert.ok(!all.includes('Путь наблюдался, готовность цели не подтверждена'));
     const edgeTexts = texts(findEdgeRows(container).get('ambiguous-redirect'));
     assert.ok(edgeTexts.includes('Готовность цели перехода не подтверждена'));
     assert.ok(edgeTexts.includes('Неуспешный запрос при переходе · GET /api/unknown → 501'));
@@ -445,6 +447,7 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(all.includes('Назначение готово'));
     assert.ok(!all.includes('Переход после ошибки источника'));
     assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    assert.ok(!all.includes('Путь наблюдался, готовность цели не подтверждена'));
   });
 
   withFakeDocument(container => {
@@ -480,6 +483,7 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(all.includes('Фоновая ошибка · GET /api/telemetry → 501'));
     assert.ok(all.includes('Переход подтверждён'));
     assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    assert.ok(!all.includes('Путь наблюдался, готовность цели не подтверждена'));
     const edgeTexts = texts(findEdgeRows(container).get('auto-list-edge'));
     assert.ok(edgeTexts.includes('Цель перехода готова'));
     assert.ok(edgeTexts.includes('Фоновая ошибка · GET /api/telemetry → 501'));
