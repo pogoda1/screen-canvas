@@ -26,6 +26,7 @@ export function transitionLabel(report) {
   if (report.transition === 'observed-url') {
     if (report.unattributedFailure) return 'Путь наблюдался, источник ошибки не определён';
     if (report.lateSourceFailure && !report.sourceFailure) return 'Наблюдался переход; ответ источника пришёл после перехода';
+    if (report.unorderedSourceFailure && !report.sourceFailure) return 'Наблюдался переход; порядок ошибки источника не подтверждён';
     if (report.sourcePending && !report.sourceFailure) return 'Наблюдался переход; запрос источника не завершился';
   }
   return transitionLabels[report.transition];

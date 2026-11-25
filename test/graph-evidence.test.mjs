@@ -94,7 +94,7 @@ test('source data failure before redirect is separated from late responses, pend
     { sequence: 2, method: 'GET', path: '/api/items/id-1', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
     { sequence: 3, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
   ];
-  const readyTarget = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1' } };
+  const readyTarget = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1', contentVerified: true } };
   const capture = captureEvidence(detailNode, expectedRedirect, readyTarget, undefined, sourceRecords, []);
   assert.equal(capture.outcome, 'blocked');
   assert.equal(capture.phase, 'request');
@@ -131,6 +131,23 @@ test('source data failure before redirect is separated from late responses, pend
   assert.equal(lateEdge.targetReady, true);
   assert.equal(lateEdge.sourceFailure, undefined);
   assert.equal(lateEdge.lateSourceFailure?.message, 'GET /api/telemetry → 501');
+
+  // Missing settlement order (undefined, e.g. XHR early callback or absent observation) must NOT be called late or source-error.
+  const unorderedSourceRecords = [
+    { sequence: 1, method: 'GET', path: '/api/detail', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const unorderedCapture = captureEvidence(detailNode, expectedRedirect, readyTarget, undefined, unorderedSourceRecords, []);
+  assert.equal(unorderedCapture.outcome, 'blocked');
+  assert.equal(unorderedCapture.transition, 'observed-url');
+  assert.equal(unorderedCapture.targetReady, true);
+  assert.equal(unorderedCapture.sourceFailure, undefined);
+  assert.equal(unorderedCapture.lateSourceFailure, undefined);
+  assert.equal(unorderedCapture.unorderedSourceFailure?.message, 'GET /api/detail → 501');
+  const unorderedEdge = redirectEdgeOutcome(unorderedSourceRecords, readyTarget, { sourcePath: '/items/id-1', actualPath: '/items' });
+  assert.equal(unorderedEdge.sourceFailure, undefined);
+  assert.equal(unorderedEdge.lateSourceFailure, undefined);
+  assert.equal(unorderedEdge.unorderedSourceFailure?.message, 'GET /api/detail → 501');
 
   // Pending source request (status 0) must NEVER be reported as source-error.
   const pendingSourceRecords = [
@@ -210,6 +227,30 @@ test('source data failure before redirect is separated from late responses, pend
   assert.equal(targetFailEdge.targetReason, 'GET /api/target → 501');
   assert.equal(targetFailEdge.sourceFailure, undefined);
   assert.equal(targetFailEdge.backgroundFailure, undefined);
+
+  // Service 200 (/api/config) + list 501 with generic ready=true (no contentVerified or with role="alert") must NEVER downgrade 501 to background.
+  const alertUnverifiedTarget = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1', alert: true } };
+  const plainUnverifiedTarget = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1' } };
+  const serviceConfigAndListFail = [
+    { sequence: 1, method: 'GET', path: '/api/config', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/list', status: 501, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  for (const target of [alertUnverifiedTarget, plainUnverifiedTarget]) {
+    const cap = captureEvidence(
+      { id: 'route:/old', path: '/old' },
+      { target: 'route:/items', path: '/items', sourcePath: '/old' },
+      target, undefined, serviceConfigAndListFail, []
+    );
+    assert.equal(cap.outcome, 'blocked');
+    assert.equal(cap.transition, 'observed-url');
+    assert.equal(cap.targetReady, false);
+    assert.equal(cap.backgroundFailure, undefined);
+    assert.equal(cap.reason.message, 'GET /api/list → 501');
+    const edge = redirectEdgeOutcome(serviceConfigAndListFail, target, { sourcePath: '/old', actualPath: '/items' });
+    assert.equal(edge.targetReady, false);
+    assert.equal(edge.targetReason, 'GET /api/list → 501');
+    assert.equal(edge.backgroundFailure, undefined);
+  }
 
   // Paired counterexample: destination has a 200 config request AND a blocking list 501 that keeps observed.ready false.
   const blockedListRecords = [

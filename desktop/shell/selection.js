@@ -27,7 +27,7 @@ function showCapture(details, report) {
   const section = document.createElement('section');
   section.className = 'capture-details';
   const sourceEvent = report.transition === 'source-error' ||
-    Boolean(!report.unattributedFailure && (report.lateSourceFailure || report.sourcePending));
+    Boolean(!report.unattributedFailure && (report.lateSourceFailure || report.unorderedSourceFailure || report.sourcePending));
   const readiness = sourceEvent
     ? report.targetReady ? 'Назначение готово' : 'Готовность назначения не подтверждена'
     : report.targetReady ? 'Экран готов' : 'Готовность экрана не подтверждена';
@@ -43,13 +43,16 @@ function showCapture(details, report) {
   if (report.lateSourceFailure) {
     section.append(paragraph('Поздний ответ источника после перехода · ' + report.lateSourceFailure.message, 'diagnostic'));
   }
+  if (report.unorderedSourceFailure) {
+    section.append(paragraph('Ошибка источника (порядок с переходом не подтверждён) · ' + report.unorderedSourceFailure.message, 'diagnostic'));
+  }
   if (report.sourcePending) {
     section.append(paragraph('Запрос источника не завершился вовремя', 'diagnostic'));
   }
   if (report.backgroundFailure) {
     section.append(paragraph('Фоновая ошибка · ' + report.backgroundFailure.message, 'diagnostic'));
   }
-  const shown = [report.sourceFailure?.message, report.lateSourceFailure?.message,
+  const shown = [report.sourceFailure?.message, report.lateSourceFailure?.message, report.unorderedSourceFailure?.message,
     report.sourcePending && report.reason.code === 'request-pending' ? report.reason.message : undefined].filter(Boolean);
   if (!shown.includes(report.reason.message)) {
     section.append(paragraph(report.reason.message, 'diagnostic'));
@@ -107,6 +110,9 @@ function directionGroup(title, edges, neighborId, neighbors) {
     }
     if (evidence.lateSourceFailure) {
       item.append(paragraph('Поздний ответ источника после перехода · ' + evidence.lateSourceFailure.message, 'diagnostic'));
+    }
+    if (evidence.unorderedSourceFailure) {
+      item.append(paragraph('Ошибка источника (порядок с переходом не подтверждён) · ' + evidence.unorderedSourceFailure.message, 'diagnostic'));
     }
     if (evidence.sourcePending) {
       item.append(paragraph('Запрос источника не завершился вовремя', 'diagnostic'));

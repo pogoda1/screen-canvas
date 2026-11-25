@@ -37,9 +37,10 @@
         apiPrefixes.some(prefix => resolved.pathname === prefix || resolved.pathname.startsWith(prefix + '/'));
     } catch { return false; }
   };
-  const recordSettlement = (reqId, startPath, startNav) => {
+  const recordSettlement = (reqId, startPath, startNav, strictLate = true) => {
     syncRoute();
     const beforeNavigation = !unloaded && navSeq === startNav && routePath === startPath;
+    if (!beforeNavigation && !strictLate) return;
     if (settlements.size >= 250) settlements.delete(settlements.keys().next().value);
     settlements.set(reqId, { beforeNavigation, endPath: routePath, endNav: navSeq });
     if (observeToken && typeof origFetch === 'function') {
@@ -88,7 +89,9 @@
           if (this.readyState !== 4 || !meta.active) return;
           const { reqId, startPath, startNav } = meta.active;
           meta.active = null;
-          if (this.status > 0) recordSettlement(reqId, startPath, startNav);
+          // An app listener registered before open() can navigate first; never
+          // assert a late XHR response from post-listener route state.
+          if (this.status > 0) recordSettlement(reqId, startPath, startNav, false);
         });
       } else if (existing) {
         existing.local = tracked;
@@ -206,15 +209,17 @@
     const error = document.querySelector('[data-screen-canvas-error],vite-error-overlay');
     const failure = error?.textContent.trim().slice(0, 240) || (error && 'The application rendered an error screen') || (renderError?.path === location.pathname ? renderError.message : undefined);
     const { content, loading, mounted } = inspectContent(index);
+    const alert = Boolean(document.body && [...document.body.querySelectorAll('[role="alert"]')].some(visible));
     const ready = !failure && !loading && Boolean(await hook('ready', content));
     const nodeId = await hook('identify');
-    const observed = { ready, ...(failure ? { failure } : {}), loading, nodeId,
+    const observed = { ready, ...(failure ? { failure } : {}), loading, ...(alert ? { alert: true } : {}), nodeId,
       mounted: Boolean(ready && mounted), applied: revision, documentId: stamp.documentId };
     if (forCapture && ready) {
+      const captureBindings = [...bindings].filter(binding => binding.captureReady);
       try {
-        const checks = await Promise.all([...bindings].filter(binding => binding.captureReady)
-          .map(async binding => binding.captureReady()));
+        const checks = await Promise.all(captureBindings.map(async binding => binding.captureReady()));
         observed.captureReady = checks.every(result => result === true);
+        if (captureBindings.length > 0 && observed.captureReady) observed.contentVerified = true;
       } catch { observed.captureError = true; }
     }
     return observed;

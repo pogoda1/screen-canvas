@@ -24,6 +24,7 @@ export interface Evidence {
   actionFailure?: Diagnostic;
   sourceFailure?: Diagnostic;
   lateSourceFailure?: Diagnostic;
+  unorderedSourceFailure?: Diagnostic;
   sourcePending?: boolean;
   unattributedFailure?: Diagnostic;
   backgroundFailure?: Diagnostic;
@@ -55,6 +56,7 @@ export interface CaptureEvidence {
   transition?: 'verified' | 'observed-url' | 'source-error' | 'unexpected';
   sourceFailure?: Diagnostic;
   lateSourceFailure?: Diagnostic;
+  unorderedSourceFailure?: Diagnostic;
   sourcePending?: boolean;
   backgroundFailure?: Diagnostic;
   unattributedFailure?: Diagnostic;

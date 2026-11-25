@@ -3,9 +3,10 @@ import test from 'node:test';
 import { launchCanvas, pick, waitGraph, waitGuest } from './helpers/electron.mjs';
 import { makeHost } from './helpers/host-fixture.mjs';
 
-test('source error redirect distinguishes pre-navigation failure, late response, pending, origin-only Referer, unattributed requests, and automatic redirect telemetry', { timeout: 70_000 }, async t => {
+test('source error redirect distinguishes pre-navigation failure, late response, unknown XHR order, pending, unattributed requests, and verified automatic redirect telemetry', { timeout: 80_000 }, async t => {
   const folder = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
+      browser: '/bindings.js',
       actions: [
         { id: 'late-target', source: 'route:/', target: 'route:/done', label: 'Late target 501',
           steps: [{ type: 'click', selector: '#late-target' }],
@@ -15,9 +16,9 @@ test('source error redirect distinguishes pre-navigation failure, late response,
           expectRequests: [{ method: 'POST', path: '/api/answer', status: 200 }] }
       ],
       createMocks: () => async ({ path }) => {
-        if (path === '/api/items' || path === '/api/answer') return { status: 200, body: { items: ['alpha'] } };
+        if (path === '/api/items' || path === '/api/answer' || path === '/api/config') return { status: 200, body: { items: ['alpha'] } };
         if (path === '/api/broken' || path === '/api/details' || path === '/api/telemetry' ||
-            path === '/api/source-late' || path === '/api/origin-fail') {
+            path === '/api/source-late' || path === '/api/origin-fail' || path === '/api/items-fail') {
           await new Promise(resolve => setTimeout(resolve, 650));
           return { status: 501, body: {} };
         }
@@ -28,6 +29,17 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         return { status: 501, body: {} };
       }
     };`,
+    'bindings.js': `
+      import { registerBrowserBindings } from 'react-screen-canvas/browser';
+      registerBrowserBindings({
+        captureReady() {
+          if (location.pathname === '/items' || location.pathname === '/items-telemetry' || location.pathname === '/items-fail') {
+            return Boolean(document.querySelector('[data-list-item]'));
+          }
+          return true;
+        }
+      });
+    `,
     'src/main.jsx': `
       import React from 'react';
       import {createRoot} from 'react-dom/client';
@@ -65,6 +77,22 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         if (missing) return <Navigate to="/unready" replace/>;
         return <div data-screen-canvas-loading>Loading detail…</div>;
       }
+      function XhrEarlyDetail() {
+        const go = useNavigate();
+        React.useEffect(() => {
+          const xhr = new XMLHttpRequest();
+          // Register listener BEFORE open() so it runs before bootstrap's listener.
+          xhr.addEventListener('readystatechange', () => {
+            if (xhr.readyState === 4 && xhr.status === 501) {
+              history.replaceState(null, '', '/items');
+              go('/items', { replace: true });
+            }
+          });
+          xhr.open('GET', '/api/xhr-detail');
+          xhr.send();
+        }, [go]);
+        return <div data-screen-canvas-loading>Loading XHR detail…</div>;
+      }
       function LateSourceRedirect() {
         const [moved, setMoved] = React.useState(false);
         React.useEffect(() => {
@@ -99,7 +127,15 @@ test('source error redirect distinguishes pre-navigation failure, late response,
           if (withTelemetry) void fetch('/api/telemetry');
         }, [withTelemetry]);
         if (!items) return <main data-screen-canvas-loading>Loading list…</main>;
-        return <main><h1>Items</h1><p>{items.join(', ')}</p></main>;
+        return <main><h1>Items</h1><ul>{items.map(item => <li key={item} data-list-item="">{item}</li>)}</ul></main>;
+      }
+      function FailedItemsList() {
+        const [failed, setFailed] = React.useState(false);
+        React.useEffect(() => {
+          void fetch('/api/config');
+          fetch('/api/items-fail').then(response => { if (!response.ok) setFailed(true); });
+        }, []);
+        return <main><h1>Items</h1>{failed && <p role="alert">Не удалось загрузить список</p>}</main>;
       }
       function OriginTarget() {
         const [failed, setFailed] = React.useState(false);
@@ -135,12 +171,15 @@ test('source error redirect distinguishes pre-navigation failure, late response,
         <Route path="/" element={<Home/>}/>
         <Route path="/items" element={<ItemsList/>}/>
         <Route path="/items-telemetry" element={<ItemsList withTelemetry/>}/>
+        <Route path="/items-fail" element={<FailedItemsList/>}/>
         <Route path="/items/:id" element={<ItemDetail/>}/>
         <Route path="/items-unready/:id" element={<UnreadyDetail/>}/>
+        <Route path="/xhr-early" element={<XhrEarlyDetail/>}/>
         <Route path="/late-source" element={<LateSourceRedirect/>}/>
         <Route path="/pending-source" element={<PendingSourceRedirect/>}/>
         <Route path="/unattributed" element={<UnattributedRedirect/>}/>
         <Route path="/auto-telemetry" element={<Navigate to="/items-telemetry" replace/>}/>
+        <Route path="/auto-list-fail" element={<Navigate to="/items-fail" replace/>}/>
         <Route path="/to-origin" element={<Navigate to="/origin-target" replace/>}/>
         <Route path="/origin-target" element={<OriginTarget/>}/>
         <Route path="/unready" element={<main data-screen-canvas-loading>Still loading</main>}/>
@@ -187,7 +226,18 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   await shell.getByRole('button', { name: '/items-unready/:id', exact: true }).click();
   await capturePanel.getByText('Готовность назначения не подтверждена', { exact: true }).waitFor();
 
-  // 3. Late source 501 arriving AFTER navigation must NOT say source-error.
+  // 3. XHR with early listener before open() keeps order unknown (never mislabeled late).
+  const xhrEarly = byPath('/xhr-early');
+  assert.equal(xhrEarly.screenshot, undefined);
+  assert.equal(xhrEarly.capture.sourceFailure, undefined, JSON.stringify(xhrEarly.capture));
+  assert.equal(xhrEarly.capture.lateSourceFailure, undefined, JSON.stringify(xhrEarly.capture));
+  assert.equal(xhrEarly.capture.unorderedSourceFailure?.message, 'GET /api/xhr-detail → 501');
+  assert.notEqual(xhrEarly.capture.transition, 'source-error');
+  await shell.getByRole('button', { name: '/xhr-early', exact: true }).click();
+  await capturePanel.getByText('Ошибка источника (порядок с переходом не подтверждён) · GET /api/xhr-detail → 501', { exact: true }).waitFor();
+  assert.equal(await capturePanel.getByText('Поздний ответ источника после перехода').count(), 0);
+
+  // 3b. Late source 501 arriving AFTER navigation must NOT say source-error.
   const lateSource = byPath('/late-source');
   assert.equal(lateSource.screenshot, undefined);
   assert.equal(lateSource.capture.sourceFailure, undefined, JSON.stringify(lateSource.capture));
@@ -240,7 +290,18 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   await capturePanel.getByText('Фоновая ошибка · GET /api/telemetry → 501', { exact: true }).waitFor();
   await capturePanel.getByText('Переход подтверждён', { exact: true }).waitFor();
 
-  // 8. Paired counterexample: blocking target list failure keeps targetReady=false and reason.
+  // 8. Paired counterexamples: blocking target list failure (with service 200 + role="alert", and /target-fail -> /broken).
+  const autoListFail = byPath('/auto-list-fail');
+  assert.equal(autoListFail.screenshot, undefined);
+  assert.equal(autoListFail.capture.transition, 'observed-url');
+  assert.equal(autoListFail.capture.targetReady, false);
+  assert.equal(autoListFail.capture.backgroundFailure, undefined);
+  assert.equal(autoListFail.capture.reason.message, 'GET /api/items-fail → 501');
+  const autoListFailEdge = graph.edges.find(edge => edge.source === 'route:/auto-list-fail' && edge.target === 'route:/items-fail');
+  assert.equal(autoListFailEdge.evidence.targetReady, false);
+  assert.equal(autoListFailEdge.evidence.targetReason, 'GET /api/items-fail → 501');
+  assert.equal(autoListFailEdge.evidence.backgroundFailure, undefined);
+
   const targetFail = byPath('/target-fail');
   assert.equal(targetFail.screenshot, undefined);
   assert.equal(targetFail.capture.transition, 'observed-url');
@@ -263,7 +324,7 @@ test('source error redirect distinguishes pre-navigation failure, late response,
   assert.equal(telemetry.backgroundFailure?.message, 'GET /api/telemetry → 501');
 });
 
-test('origin-only Referer after SPA root redirect and stale keepalive after full navigation never misattribute errors', { timeout: 45_000 }, async t => {
+test('origin-only Referer, stale keepalive, and unverified service-200 + alert-list never misattribute or falsely confirm readiness', { timeout: 45_000 }, async t => {
   const folder = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
       captureRules: [
@@ -271,7 +332,7 @@ test('origin-only Referer after SPA root redirect and stale keepalive after full
         { source: 'route:/full-old', target: 'route:/full-new', path: '/full-new' }
       ],
       createMocks: () => async ({ path }) => {
-        if (path === '/api/new-data') return { status: 200, body: { ok: true } };
+        if (path === '/api/new-data' || path === '/api/config') return { status: 200, body: { ok: true } };
         if (path === '/api/old-keepalive') {
           await new Promise(resolve => setTimeout(resolve, 600));
           return { status: 501, body: {} };
@@ -308,11 +369,21 @@ test('origin-only Referer after SPA root redirect and stale keepalive after full
         if (!ready) return <main data-screen-canvas-loading>Loading new…</main>;
         return <main><h1>Full new</h1></main>;
       }
+      function AlertList() {
+        const [failed, setFailed] = React.useState(false);
+        React.useEffect(() => {
+          void fetch('/api/config');
+          fetch('/api/list').then(response => { if (!response.ok) setFailed(true); });
+        }, []);
+        return <main><h1>Items</h1>{failed && <p role="alert">Не удалось загрузить список</p>}</main>;
+      }
       createRoot(document.getElementById('root')).render(<BrowserRouter><Routes>
         <Route path="/" element={<Navigate to="/done" replace/>}/>
         <Route path="/done" element={<Done/>}/>
         <Route path="/full-old" element={<FullOld/>}/>
         <Route path="/full-new" element={<FullNew/>}/>
+        <Route path="/to-alert" element={<Navigate to="/alert-list" replace/>}/>
+        <Route path="/alert-list" element={<AlertList/>}/>
       </Routes></BrowserRouter>);
     `
   });
@@ -338,4 +409,18 @@ test('origin-only Referer after SPA root redirect and stale keepalive after full
   assert.notEqual(fullOld.capture.transition, 'source-error');
   assert.equal(fullOld.capture.lateSourceFailure?.message, 'GET /api/old-keepalive → 501');
   assert.equal(fullOld.capture.targetReady, true);
+
+  // Generic neutral page (no adapter captureReady) with service GET /api/config 200 + GET /api/list 501 + role="alert":
+  // must NOT downgrade 501 to backgroundFailure and must NOT confirm targetReady.
+  const toAlert = byPath('/to-alert');
+  assert.equal(toAlert.screenshot, undefined);
+  assert.equal(toAlert.capture.outcome, 'blocked');
+  assert.equal(toAlert.capture.transition, 'observed-url');
+  assert.equal(toAlert.capture.targetReady, false, JSON.stringify(toAlert.capture));
+  assert.equal(toAlert.capture.backgroundFailure, undefined);
+  assert.equal(toAlert.capture.reason.message, 'GET /api/list → 501');
+  const alertEdge = graph.edges.find(edge => edge.source === 'route:/to-alert' && edge.target === 'route:/alert-list');
+  assert.equal(alertEdge.evidence.targetReady, false, JSON.stringify(alertEdge.evidence));
+  assert.equal(alertEdge.evidence.targetReason, 'GET /api/list → 501');
+  assert.equal(alertEdge.evidence.backgroundFailure, undefined);
 });

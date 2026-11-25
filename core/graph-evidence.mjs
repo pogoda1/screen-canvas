@@ -131,14 +131,16 @@ export function redirectEdgeOutcome(entries, observed, { sourcePath, actualPath 
     sourcePath, actualPath, actualDocumentId: observed?.status?.documentId
   });
   const sourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === true));
-  const lateSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation !== true));
+  const lateSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === false));
+  const unorderedSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === undefined));
   const sourcePending = partitioned.source.some(record => record.status === 0);
   const targetHttp = requestFailure(partitioned.target);
   const targetPending = partitioned.target.some(record => record.status === 0)
     ? { code: 'request-pending', message: 'A local request did not finish within the capture budget' }
     : undefined;
   const targetHasSuccess = partitioned.target.some(record => record.status >= 200 && record.status < 300);
-  const backgroundFailure = targetHttp && !targetPending && Boolean(observed?.ready) && targetHasSuccess
+  const targetContentVerified = Boolean(observed?.ready && observed?.status?.contentVerified === true && !observed?.status?.alert);
+  const backgroundFailure = targetHttp && !targetPending && targetContentVerified && targetHasSuccess
     ? targetHttp : undefined;
   const targetFailure = backgroundFailure ? undefined : (targetHttp || targetPending);
   const ambiguousFailure = requestProblem(partitioned.ambiguous);
@@ -149,6 +151,7 @@ export function redirectEdgeOutcome(entries, observed, { sourcePath, actualPath 
     ...(targetReason ? { targetReason } : {}),
     ...(sourceFailure ? { sourceFailure } : {}),
     ...(lateSourceFailure ? { lateSourceFailure } : {}),
+    ...(unorderedSourceFailure ? { unorderedSourceFailure } : {}),
     ...(sourcePending ? { sourcePending: true } : {}),
     ...(backgroundFailure ? { backgroundFailure } : {}),
     ...(!targetFailure && ambiguousFailure ? { unattributedFailure: ambiguousFailure } : {})
@@ -165,7 +168,8 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
     sourcePath: expected.sourcePath, actualPath: path, actualDocumentId: observed.status?.documentId
   }) : { source: [], target: requests, ambiguous: [] };
   const sourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === true));
-  const lateSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation !== true));
+  const lateSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === false));
+  const unorderedSourceFailure = requestFailure(partitioned.source.filter(record => record.settledBeforeNavigation === undefined));
   const sourcePending = partitioned.source.some(record => record.status === 0)
     ? { code: 'request-pending', message: 'A local request did not finish within the capture budget' }
     : undefined;
@@ -174,19 +178,20 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
     ? { code: 'request-pending', message: 'A local request did not finish within the capture budget' }
     : undefined;
   const targetHasSuccess = partitioned.target.some(record => record.status >= 200 && record.status < 300);
-  const backgroundFailure = changed && targetHttp && !targetPending && Boolean(observed.ready) && targetHasSuccess
+  const targetContentVerified = Boolean(observed.ready && observed.status?.contentVerified === true && !observed.status?.alert);
+  const backgroundFailure = changed && targetHttp && !targetPending && targetContentVerified && targetHasSuccess
     ? targetHttp : undefined;
   const targetFailure = backgroundFailure ? undefined : (targetHttp || targetPending);
   const ambiguousFailure = requestProblem(partitioned.ambiguous);
   const blockingTarget = Boolean(targetFailure || ambiguousFailure);
   const sourceRedirect = Boolean(changed && sourceFailure && !blockingTarget);
-  const sourceAfterRedirect = Boolean(changed && !sourceFailure && (lateSourceFailure || sourcePending) && !blockingTarget);
-  const failure = targetFailure || ambiguousFailure || sourceFailure || lateSourceFailure || sourcePending;
-  const targetReady = (sourceRedirect || sourceAfterRedirect)
+  const sourceOther = Boolean(changed && !sourceFailure && (lateSourceFailure || unorderedSourceFailure || sourcePending) && !blockingTarget);
+  const failure = targetFailure || ambiguousFailure || sourceFailure || lateSourceFailure || unorderedSourceFailure || sourcePending;
+  const targetReady = (sourceRedirect || sourceOther)
     ? Boolean(observed.ready && actualNode && path)
     : Boolean(observed.ready && matches && !blockingTarget);
   const transition = sourceRedirect ? 'source-error'
-    : matches && expectsTransition ? (!sourceAfterRedirect && targetReady ? 'verified' : 'observed-url')
+    : matches && expectsTransition ? (!sourceOther && targetReady ? 'verified' : 'observed-url')
     : changed && !matches ? 'unexpected' : undefined;
   const different = !matches && (Boolean(observed.ready) || changed);
   const mismatch = different && { code: 'different-screen', message: 'The observed screen differs from the expected destination' };
@@ -210,6 +215,7 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
     targetReady, ...(transition ? { transition } : {}),
     ...(sourceFailure ? { sourceFailure } : {}),
     ...(lateSourceFailure ? { lateSourceFailure } : {}),
+    ...(unorderedSourceFailure ? { unorderedSourceFailure } : {}),
     ...(sourcePending ? { sourcePending: true } : {}),
     ...(backgroundFailure ? { backgroundFailure } : {}),
     ...(!targetFailure && ambiguousFailure ? { unattributedFailure: ambiguousFailure } : {}),

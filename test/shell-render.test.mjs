@@ -484,4 +484,50 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(edgeTexts.includes('Цель перехода готова'));
     assert.ok(edgeTexts.includes('Фоновая ошибка · GET /api/telemetry → 501'));
   });
+
+  const unorderedNode = {
+    id: 'route:/xhr-old',
+    path: '/xhr-old',
+    label: '/xhr-old',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: true,
+      transition: 'observed-url',
+      unorderedSourceFailure: { code: 'mock-response', message: 'GET /api/xhr-detail → 501' },
+      reason: { code: 'mock-response', message: 'GET /api/xhr-detail → 501' },
+      observations: []
+    }
+  };
+  assert.equal(transitionLabel(unorderedNode.capture), 'Наблюдался переход; порядок ошибки источника не подтверждён');
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [unorderedNode, { id: 'route:/items', path: '/items', label: '/items' }],
+      edges: [{
+        id: 'xhr-edge',
+        source: 'route:/xhr-old',
+        target: 'route:/items',
+        label: '/items',
+        action: 'redirect',
+        evidence: {
+          status: 'unverified',
+          actualPath: '/items',
+          actualTarget: 'route:/items',
+          transitionObserved: true,
+          targetReady: true,
+          unorderedSourceFailure: { code: 'mock-response', message: 'GET /api/xhr-detail → 501' },
+          originReason: 'automatic'
+        }
+      }]
+    }, 'route:/xhr-old');
+    const all = texts(container);
+    assert.ok(all.includes('Ошибка источника (порядок с переходом не подтверждён) · GET /api/xhr-detail → 501'));
+    assert.ok(all.includes('Наблюдался переход; порядок ошибки источника не подтверждён'));
+    assert.ok(!all.some(line => line.includes('Поздний ответ источника после перехода')));
+    assert.ok(!all.includes('Переход после ошибки источника'));
+  });
 });
