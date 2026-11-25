@@ -65,7 +65,9 @@ export async function createCapture(worker, nodeId, role, signal) {
       id: preview.id, after, ...(edge.expectRequests ? { requests: edge.expectRequests } : {}),
       ...(edge.expectSnapshot ? { snapshot: edge.expectSnapshot } : {})
     }, timeout), signal, timeout),
-    requests: () => worker.call('requests', { id: preview.id }, 1000).catch(() => [])
+    requests: () => worker.call('requests', { id: preview.id }, 1000).catch(() => []),
+    requestEvidence: () => contents.isDestroyed() ? Promise.resolve(null) :
+      withBudget(contents.executeJavaScript('globalThis.__screenCanvasRequestEvidence?.()'), signal, 350).catch(() => null)
   });
 }
 

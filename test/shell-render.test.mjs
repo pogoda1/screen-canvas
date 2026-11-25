@@ -357,4 +357,131 @@ test('selection panel and transition labels separate source-error redirects, tar
     assert.ok(telemetryTexts.includes('Цель перехода готова'));
     assert.ok(telemetryTexts.includes('Фоновая ошибка · GET /api/telemetry → 501'));
   });
+
+  // Late source telemetry, pending source request, and automatic redirect with background telemetry.
+  const lateSourceNode = {
+    id: 'route:/late-src',
+    path: '/late-src',
+    label: '/late-src',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: true,
+      transition: 'observed-url',
+      lateSourceFailure: { code: 'mock-response', message: 'GET /api/telemetry → 501' },
+      reason: { code: 'mock-response', message: 'GET /api/telemetry → 501' },
+      observations: []
+    }
+  };
+  const pendingSourceNode = {
+    id: 'route:/pending-src',
+    path: '/pending-src',
+    label: '/pending-src',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: true,
+      transition: 'observed-url',
+      sourcePending: true,
+      reason: { code: 'request-pending', message: 'A local request did not finish within the capture budget' },
+      observations: []
+    }
+  };
+  const autoTelemetryNode = {
+    id: 'route:/auto-list',
+    path: '/auto-list',
+    label: '/auto-list',
+    capture: {
+      outcome: 'transition',
+      phase: 'complete',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: true,
+      transition: 'verified',
+      backgroundFailure: { code: 'mock-response', message: 'GET /api/telemetry → 501' },
+      reason: { code: 'expected-transition', message: 'The expected destination became ready' },
+      observations: []
+    }
+  };
+
+  assert.equal(transitionLabel(lateSourceNode.capture), 'Наблюдался переход; ответ источника пришёл после перехода');
+  assert.equal(transitionLabel(pendingSourceNode.capture), 'Наблюдался переход; запрос источника не завершился');
+  assert.equal(transitionLabel(autoTelemetryNode.capture), 'Переход подтверждён');
+
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [lateSourceNode, { id: 'route:/items', path: '/items', label: '/items' }],
+      edges: [{
+        id: 'late-src-edge',
+        source: 'route:/late-src',
+        target: 'route:/items',
+        label: '/items',
+        action: 'redirect',
+        direct: true,
+        evidence: {
+          status: 'confirmed',
+          actualPath: '/items',
+          actualTarget: 'route:/items',
+          transitionObserved: true,
+          targetReady: true,
+          lateSourceFailure: { code: 'mock-response', message: 'GET /api/telemetry → 501' },
+          originReason: 'automatic'
+        }
+      }]
+    }, 'route:/late-src');
+    const all = texts(container);
+    assert.ok(all.includes('Поздний ответ источника после перехода · GET /api/telemetry → 501'));
+    assert.ok(all.includes('Наблюдался переход; ответ источника пришёл после перехода'));
+    assert.ok(all.includes('Назначение готово'));
+    assert.ok(!all.includes('Переход после ошибки источника'));
+    assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+  });
+
+  withFakeDocument(container => {
+    showNode(container, { nodes: [pendingSourceNode], edges: [] }, 'route:/pending-src');
+    const all = texts(container);
+    assert.ok(all.includes('Запрос источника не завершился вовремя'));
+    assert.ok(all.includes('Наблюдался переход; запрос источника не завершился'));
+    assert.ok(!all.includes('Переход после ошибки источника'));
+  });
+
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [autoTelemetryNode, { id: 'route:/items', path: '/items', label: '/items' }],
+      edges: [{
+        id: 'auto-list-edge',
+        source: 'route:/auto-list',
+        target: 'route:/items',
+        label: '/items',
+        action: 'redirect',
+        direct: true,
+        evidence: {
+          status: 'confirmed',
+          actualPath: '/items',
+          actualTarget: 'route:/items',
+          transitionObserved: true,
+          targetReady: true,
+          backgroundFailure: { code: 'mock-response', message: 'GET /api/telemetry → 501' },
+          originReason: 'automatic'
+        }
+      }]
+    }, 'route:/auto-list');
+    const all = texts(container);
+    assert.ok(all.includes('Фоновая ошибка · GET /api/telemetry → 501'));
+    assert.ok(all.includes('Переход подтверждён'));
+    assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    const edgeTexts = texts(findEdgeRows(container).get('auto-list-edge'));
+    assert.ok(edgeTexts.includes('Цель перехода готова'));
+    assert.ok(edgeTexts.includes('Фоновая ошибка · GET /api/telemetry → 501'));
+  });
 });

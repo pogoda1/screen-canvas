@@ -1,11 +1,124 @@
 (() => {
-  const { stamp, token, initial, browser } = globalThis.__screenCanvasBoot;
+  const { stamp, token, observeToken, apiPrefixes = ['/api'], initial, browser } = globalThis.__screenCanvasBoot;
   delete globalThis.__screenCanvasBoot;
   const bindings = new Set();
   let scenario = initial;
   let revision = stamp.revision;
   let running = true;
+  let unloaded = false;
+  let navSeq = 0;
+  let routePath = location.pathname;
+  let reqSerial = 0;
+  const settlements = new Map();
   const url = '/__screen_canvas/session';
+  const observeUrl = '/__screen_canvas/observe';
+  const origFetch = globalThis.fetch;
+  const syncRoute = () => {
+    if (location.pathname !== routePath) {
+      routePath = location.pathname;
+      navSeq++;
+    }
+  };
+  for (const method of ['pushState', 'replaceState']) {
+    const original = history[method];
+    if (typeof original === 'function') {
+      history[method] = function (...args) {
+        const result = original.apply(this, args);
+        syncRoute();
+        return result;
+      };
+    }
+  }
+  addEventListener('popstate', syncRoute);
+  const isTrackedApi = target => {
+    try {
+      const resolved = new URL(String(target), location.href);
+      return resolved.origin === location.origin &&
+        apiPrefixes.some(prefix => resolved.pathname === prefix || resolved.pathname.startsWith(prefix + '/'));
+    } catch { return false; }
+  };
+  const recordSettlement = (reqId, startPath, startNav) => {
+    syncRoute();
+    const beforeNavigation = !unloaded && navSeq === startNav && routePath === startPath;
+    if (settlements.size >= 250) settlements.delete(settlements.keys().next().value);
+    settlements.set(reqId, { beforeNavigation, endPath: routePath, endNav: navSeq });
+    if (observeToken && typeof origFetch === 'function') {
+      void origFetch.call(globalThis, observeUrl, {
+        method: 'POST',
+        keepalive: true,
+        headers: { 'content-type': 'application/json', 'x-screen-canvas-observe': observeToken },
+        body: JSON.stringify({ requestId: reqId, beforeNavigation, endPath: routePath, endNav: navSeq })
+      }).catch(() => {});
+    }
+  };
+  if (observeToken && typeof origFetch === 'function') {
+    globalThis.fetch = function (input, init) {
+      const raw = input instanceof Request ? input.url : input;
+      if (!isTrackedApi(raw)) return origFetch.call(this, input, init);
+      syncRoute();
+      const startPath = routePath;
+      const startNav = navSeq;
+      const reqId = String(++reqSerial);
+      let promise;
+      try {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        headers.set('x-screen-canvas-req-doc', observeToken);
+        headers.set('x-screen-canvas-req-path', startPath);
+        headers.set('x-screen-canvas-req-nav', String(startNav));
+        headers.set('x-screen-canvas-req-id', reqId);
+        promise = origFetch.call(this, input, { ...init, headers });
+      } catch {
+        return origFetch.call(this, input, init);
+      }
+      promise.then(() => recordSettlement(reqId, startPath, startNav), () => {});
+      return promise;
+    };
+  }
+  if (observeToken && typeof XMLHttpRequest === 'function') {
+    const xhrOpen = XMLHttpRequest.prototype.open;
+    const xhrSend = XMLHttpRequest.prototype.send;
+    const xhrMeta = new WeakMap();
+    XMLHttpRequest.prototype.open = function (method, target, ...rest) {
+      const tracked = isTrackedApi(target);
+      const existing = xhrMeta.get(this);
+      if (tracked && !existing) {
+        const meta = { local: true, active: null };
+        xhrMeta.set(this, meta);
+        this.addEventListener('readystatechange', () => {
+          if (this.readyState !== 4 || !meta.active) return;
+          const { reqId, startPath, startNav } = meta.active;
+          meta.active = null;
+          if (this.status > 0) recordSettlement(reqId, startPath, startNav);
+        });
+      } else if (existing) {
+        existing.local = tracked;
+        existing.active = null;
+      }
+      return xhrOpen.call(this, method, target, ...rest);
+    };
+    XMLHttpRequest.prototype.send = function (...args) {
+      const meta = xhrMeta.get(this);
+      if (meta?.local) {
+        syncRoute();
+        const startPath = routePath;
+        const startNav = navSeq;
+        const reqId = String(++reqSerial);
+        try {
+          this.setRequestHeader('x-screen-canvas-req-doc', observeToken);
+          this.setRequestHeader('x-screen-canvas-req-path', startPath);
+          this.setRequestHeader('x-screen-canvas-req-nav', String(startNav));
+          this.setRequestHeader('x-screen-canvas-req-id', reqId);
+          meta.active = { reqId, startPath, startNav };
+        } catch {
+          meta.active = null;
+        }
+      }
+      return xhrSend.apply(this, args);
+    };
+  }
+  Object.defineProperty(globalThis, '__screenCanvasRequestEvidence', {
+    value: () => ({ documentId: stamp.documentId, settlements: Object.fromEntries(settlements) })
+  });
   const bridge = {
     get initial() { return scenario; },
     register(binding) {
@@ -14,7 +127,7 @@
     }
   };
   Object.defineProperty(globalThis, Symbol.for('react-screen-canvas.browser'), { value: bridge });
-  const send = (type, payload) => fetch(url, {
+  const send = (type, payload) => origFetch.call(globalThis, url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-screen-canvas-document': token },
     body: JSON.stringify({ ...stamp, revision, type, ...payload })
@@ -145,5 +258,5 @@
       if (running) console.error('Screen Canvas preview:', error);
     }
   };
-  addEventListener('pagehide', () => { running = false; }, { once: true });
+  addEventListener('pagehide', () => { running = false; unloaded = true; navSeq++; }, { once: true });
 })();

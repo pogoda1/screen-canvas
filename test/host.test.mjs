@@ -143,10 +143,11 @@ test('expired opens release their slots without leaving late listeners', { timeo
   await assert.rejects(fetch(next.origin));
 });
 
-test('sessions record same-origin request attribution and document transitions without leaking internal fields', { timeout: 15_000 }, async t => {
+test('sessions record verified document/route attribution and settlement order without guessing from Referer or latest HTML', { timeout: 15_000 }, async t => {
   const root = await makeHost(t, {
     'screen-canvas.config.mjs': `export default {
-      createMocks: () => ({ path }) => path === '/api/items/1' ? { status: 501, body: {} } : { status: 200, body: { ok: true } }
+      createMocks: () => ({ path }) => path === '/api/items/1' || path === '/api/keepalive' || path === '/api/origin-only'
+        ? { status: 501, body: {} } : { status: 200, body: { ok: true } }
     };`
   });
   const child = fork(new URL('./helpers/node-worker.mjs', import.meta.url), {
@@ -163,24 +164,61 @@ test('sessions record same-origin request attribution and document transitions w
     const html = await (await fetch(session.origin + pathname, {
       headers: { accept: 'text/html', 'x-screen-canvas-navigation': session.navigationKey }
     })).text();
-    return JSON.parse(/__screenCanvasBoot=(.*?);\(\(\)/s.exec(html)[1]).stamp.documentId;
+    return JSON.parse(/__screenCanvasBoot=(.*?);\(\(\)/s.exec(html)[1]);
   };
   const doc1 = await loadDoc('/items/1');
-  await fetch(session.origin + '/api/items/1', { headers: { referer: session.origin + '/items/1' } });
-  await fetch(session.origin + '/api/external-ref', { headers: { referer: 'https://example.invalid/secret' } });
+  // 1. Verified request on doc1 completed before doc2.
+  await fetch(session.origin + '/api/items/1', {
+    headers: {
+      'x-screen-canvas-req-doc': doc1.observeToken,
+      'x-screen-canvas-req-path': '/items/1',
+      'x-screen-canvas-req-id': '1'
+    }
+  });
+  await fetch(session.origin + '/__screen_canvas/observe', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-screen-canvas-observe': doc1.observeToken },
+    body: JSON.stringify({ requestId: '1', beforeNavigation: true })
+  });
+  // 2. Origin-only Referer WITHOUT observeToken must NOT guess sourcePath or documentId.
+  await fetch(session.origin + '/api/origin-only', { headers: { referer: session.origin + '/' } });
+  // 3. Full-page navigation loads doc2.
   const doc2 = await loadDoc('/items');
-  assert.notEqual(doc1, doc2);
-  await fetch(session.origin + '/api/items', { headers: { referer: session.origin + '/items' } });
+  assert.notEqual(doc1.stamp.documentId, doc2.stamp.documentId);
+  // 4. Stale keepalive from doc1 arriving AFTER doc2 without observeToken must NOT get doc2's documentId.
+  await fetch(session.origin + '/api/keepalive');
+  // 5. Stale keepalive from doc1 arriving AFTER doc2 WITH doc1 observeToken keeps doc1 and marks settledBeforeNavigation=false.
+  await fetch(session.origin + '/api/keepalive', {
+    headers: {
+      'x-screen-canvas-req-doc': doc1.observeToken,
+      'x-screen-canvas-req-path': '/items/1',
+      'x-screen-canvas-req-id': '2'
+    }
+  });
+  // 6. Verified request on doc2 with origin-only Referer still records /items, NOT /.
+  await fetch(session.origin + '/api/items', {
+    headers: {
+      referer: session.origin + '/',
+      'x-screen-canvas-req-doc': doc2.observeToken,
+      'x-screen-canvas-req-path': '/items',
+      'x-screen-canvas-req-id': '1'
+    }
+  });
   const records = await worker.call('requests', { id: session.id });
-  assert.equal(records.length, 3);
+  assert.equal(records.length, 5);
   assert.equal(records[0].sourcePath, '/items/1');
-  assert.equal(records[0].documentId, doc1);
+  assert.equal(records[0].documentId, doc1.stamp.documentId);
   assert.equal(records[0].initialDocument, true);
-  assert.equal(records[0].status, 501);
+  assert.equal(records[0].settledBeforeNavigation, true);
   assert.equal(records[1].sourcePath, undefined);
-  assert.equal(records[1].documentId, doc1);
-  assert.equal(records[2].sourcePath, '/items');
-  assert.equal(records[2].documentId, doc2);
-  assert.equal(records[2].initialDocument, false);
+  assert.equal(records[1].documentId, undefined);
+  assert.equal(records[2].sourcePath, undefined);
+  assert.equal(records[2].documentId, undefined);
+  assert.equal(records[3].sourcePath, '/items/1');
+  assert.equal(records[3].documentId, doc1.stamp.documentId);
+  assert.equal(records[3].settledBeforeNavigation, false);
+  assert.equal(records[4].sourcePath, '/items');
+  assert.equal(records[4].documentId, doc2.stamp.documentId);
+  assert.equal(records[4].initialDocument, false);
   await worker.stop();
 });

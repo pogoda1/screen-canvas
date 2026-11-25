@@ -23,6 +23,19 @@ async function settleRequests(capture, signal) {
   return { records, waited };
 }
 
+async function enrichRequests(capture, records) {
+  const evidence = await capture?.requestEvidence?.();
+  if (!evidence?.documentId || !evidence.settlements) return records;
+  return records.map(record => {
+    if (record.documentId === evidence.documentId && record.requestId &&
+        Object.hasOwn(evidence.settlements, record.requestId) &&
+        record.settledBeforeNavigation === undefined) {
+      return { ...record, settledBeforeNavigation: Boolean(evidence.settlements[record.requestId].beforeNavigation) };
+    }
+    return record;
+  });
+}
+
 function sameScreenIdentity(left, right) {
   return left.url === right.url && left.documentVersion === right.documentVersion &&
     left.navigationVersion === right.navigationVersion && left.id === right.id &&
@@ -113,10 +126,11 @@ export async function crawlGraph(worker, graph, signal, update) {
     } finally {
       if (!signal.aborted) {
         const { records } = settled ?? await settleRequests(capture, jobSignal);
+        const enriched = await enrichRequests(capture, records);
         if (!signal.aborted) {
-          node.requests = localRequests(records);
+          node.requests = localRequests(enriched);
           if (jobSignal.aborted) screenshot = undefined;
-          node.capture = captureEvidence(node, expected, observed, screenshot, records, capture?.errors ?? []);
+          node.capture = captureEvidence(node, expected, observed, screenshot, enriched, capture?.errors ?? []);
           if (node.capture.outcome === 'captured' || node.capture.outcome === 'special-state') {
             node.screenshot = screenshot;
             frames.set(node.id, { key: capture.frameKey, path: observed.pathname });
@@ -146,10 +160,10 @@ export async function crawlGraph(worker, graph, signal, update) {
     try {
       const target = nodes.get(edge.target);
       if (!target) throw new Error('External destination');
-      const timeout = edge.action === 'adapter' ? 6500 : 2600;
+      redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
+      const timeout = edge.action === 'adapter' ? 6500 : redirects ? 4000 : 2600;
       jobSignal = AbortSignal.any([signal, AbortSignal.timeout(2 * timeout + 6500)]);
       capture = await createCapture(worker, edge.source, edge.role, jobSignal);
-      redirects = edge.action === 'redirect' || edge.steps?.every(step => step.type === 'redirect');
       initialPath = capture.initialPath;
       if (!redirects) {
         const source = await awaitScreen(capture, graph, jobSignal, { expected: edge.source, timeout, waitForNavigation: true });
@@ -184,7 +198,7 @@ export async function crawlGraph(worker, graph, signal, update) {
       }
       const deadline = Date.now() + timeout;
       const afterNavigation = self && !edge.expectRequests?.length && !differentSnapshot ? startedNavigation : undefined;
-      const expect = { expected: edge.target, from: edge.source, timeout, afterNavigation };
+      const expect = { expected: edge.target, from: edge.source, timeout, afterNavigation, forCapture: redirects };
       observed = await awaitScreen(capture, graph, jobSignal, { ...expect, waitForNavigation: redirects });
       // Requests can outlast the first ready sample, including on the same URL.
       // If the document or step changes while settling, observe its requests too.
@@ -193,7 +207,7 @@ export async function crawlGraph(worker, graph, signal, update) {
         const settled = await settleRequests(capture, jobSignal);
         records = settled.records;
         if (jobSignal.aborted) break;
-        const current = await refreshScreen(capture, graph, jobSignal, settled.waited);
+        const current = await refreshScreen(capture, graph, jobSignal, settled.waited, redirects);
         changed = !sameScreenIdentity(current, observed);
         observed = changed && !current.ready && !current.status?.failure ?
           await awaitScreen(capture, graph, jobSignal, expect) : current;
@@ -222,7 +236,7 @@ export async function crawlGraph(worker, graph, signal, update) {
     } catch (error) { reason = error.message; }
     finally {
       if (!signal.aborted) {
-        const entries = records ?? await capture?.requests() ?? [];
+        const entries = await enrichRequests(capture, records ?? await capture?.requests() ?? []);
         const requests = localRequests(entries);
         const actualPath = observed?.pathname;
         // The action is proved by its declared exchanges and observed target.

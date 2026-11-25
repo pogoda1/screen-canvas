@@ -26,7 +26,9 @@ function disclosure(title, entries) {
 function showCapture(details, report) {
   const section = document.createElement('section');
   section.className = 'capture-details';
-  const readiness = report.transition === 'source-error'
+  const sourceEvent = report.transition === 'source-error' ||
+    Boolean(!report.unattributedFailure && (report.lateSourceFailure || report.sourcePending));
+  const readiness = sourceEvent
     ? report.targetReady ? 'Назначение готово' : 'Готовность назначения не подтверждена'
     : report.targetReady ? 'Экран готов' : 'Готовность экрана не подтверждена';
   section.append(
@@ -38,7 +40,18 @@ function showCapture(details, report) {
   if (report.sourceFailure) {
     section.append(paragraph('Ошибка источника · ' + report.sourceFailure.message, 'diagnostic'));
   }
-  if (!report.sourceFailure || report.reason.message !== report.sourceFailure.message) {
+  if (report.lateSourceFailure) {
+    section.append(paragraph('Поздний ответ источника после перехода · ' + report.lateSourceFailure.message, 'diagnostic'));
+  }
+  if (report.sourcePending) {
+    section.append(paragraph('Запрос источника не завершился вовремя', 'diagnostic'));
+  }
+  if (report.backgroundFailure) {
+    section.append(paragraph('Фоновая ошибка · ' + report.backgroundFailure.message, 'diagnostic'));
+  }
+  const shown = [report.sourceFailure?.message, report.lateSourceFailure?.message,
+    report.sourcePending && report.reason.code === 'request-pending' ? report.reason.message : undefined].filter(Boolean);
+  if (!shown.includes(report.reason.message)) {
     section.append(paragraph(report.reason.message, 'diagnostic'));
   }
   if (report.transition) section.append(paragraph(transitionLabel(report)));
@@ -91,6 +104,12 @@ function directionGroup(title, edges, neighborId, neighbors) {
     }
     if (evidence.sourceFailure) {
       item.append(paragraph('Ошибка источника · ' + evidence.sourceFailure.message, 'diagnostic'));
+    }
+    if (evidence.lateSourceFailure) {
+      item.append(paragraph('Поздний ответ источника после перехода · ' + evidence.lateSourceFailure.message, 'diagnostic'));
+    }
+    if (evidence.sourcePending) {
+      item.append(paragraph('Запрос источника не завершился вовремя', 'diagnostic'));
     }
     if (evidence.unattributedFailure) {
       item.append(paragraph('Неуспешный запрос при переходе · ' + evidence.unattributedFailure.message, 'diagnostic'));

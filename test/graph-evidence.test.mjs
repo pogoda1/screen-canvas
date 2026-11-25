@@ -86,12 +86,12 @@ test('multi-step actions receive a dedicated screen origin reason without alteri
   assert.equal(actionOriginReason({ redirects: false, multiStep: false, hasSourceFrame: false, sameScenario: false }), 'control-not-in-frame');
 });
 
-test('source data failure before redirect is separated from destination readiness and controls', () => {
+test('source data failure before redirect is separated from late responses, pending requests, background telemetry, and blocking target failures', () => {
   const detailNode = { id: 'route:/items/:id', path: '/items/:id' };
   const expectedRedirect = { target: 'route:/items', path: '/items', sourcePath: '/items/id-1' };
   const sourceRecords = [
-    { sequence: 1, method: 'GET', path: '/api/session', status: 200, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true },
-    { sequence: 2, method: 'GET', path: '/api/items/id-1', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true },
+    { sequence: 1, method: 'GET', path: '/api/session', status: 200, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
+    { sequence: 2, method: 'GET', path: '/api/items/id-1', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
     { sequence: 3, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
   ];
   const readyTarget = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1' } };
@@ -103,6 +103,8 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(capture.actualPath, '/items');
   assert.equal(capture.targetReady, true);
   assert.equal(capture.sourceFailure?.message, 'GET /api/items/id-1 → 501');
+  assert.equal(capture.lateSourceFailure, undefined);
+  assert.equal(capture.sourcePending, undefined);
   assert.equal(capture.reason.message, 'GET /api/items/id-1 → 501');
   assert.equal(capture.unattributedFailure, undefined);
 
@@ -110,7 +112,60 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(edgeResult.targetReady, true);
   assert.equal(edgeResult.targetReason, undefined);
   assert.equal(edgeResult.sourceFailure?.message, 'GET /api/items/id-1 → 501');
+  assert.equal(edgeResult.lateSourceFailure, undefined);
+  assert.equal(edgeResult.sourcePending, undefined);
   assert.equal(edgeResult.unattributedFailure, undefined);
+
+  // Late source telemetry arriving AFTER navigation must NEVER be reported as source-error.
+  const lateSourceRecords = [
+    { sequence: 1, method: 'GET', path: '/api/telemetry', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: false },
+    { sequence: 2, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const lateCapture = captureEvidence(detailNode, expectedRedirect, readyTarget, undefined, lateSourceRecords, []);
+  assert.equal(lateCapture.outcome, 'blocked');
+  assert.equal(lateCapture.transition, 'observed-url');
+  assert.equal(lateCapture.targetReady, true);
+  assert.equal(lateCapture.sourceFailure, undefined);
+  assert.equal(lateCapture.lateSourceFailure?.message, 'GET /api/telemetry → 501');
+  const lateEdge = redirectEdgeOutcome(lateSourceRecords, readyTarget, { sourcePath: '/items/id-1', actualPath: '/items' });
+  assert.equal(lateEdge.targetReady, true);
+  assert.equal(lateEdge.sourceFailure, undefined);
+  assert.equal(lateEdge.lateSourceFailure?.message, 'GET /api/telemetry → 501');
+
+  // Pending source request (status 0) must NEVER be reported as source-error.
+  const pendingSourceRecords = [
+    { sequence: 1, method: 'GET', path: '/api/slow', status: 0, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const pendingCapture = captureEvidence(detailNode, expectedRedirect, readyTarget, undefined, pendingSourceRecords, []);
+  assert.equal(pendingCapture.outcome, 'blocked');
+  assert.equal(pendingCapture.transition, 'observed-url');
+  assert.equal(pendingCapture.targetReady, true);
+  assert.equal(pendingCapture.sourceFailure, undefined);
+  assert.equal(pendingCapture.sourcePending, true);
+  const pendingEdge = redirectEdgeOutcome(pendingSourceRecords, readyTarget, { sourcePath: '/items/id-1', actualPath: '/items' });
+  assert.equal(pendingEdge.targetReady, true);
+  assert.equal(pendingEdge.sourceFailure, undefined);
+  assert.equal(pendingEdge.sourcePending, true);
+
+  // Automatic redirect to a ready list with 200 list data and separate 501 telemetry keeps targetReady and reports backgroundFailure.
+  const autoTelemetryRecords = [
+    { sequence: 1, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/telemetry', status: 501, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const autoTelemetryCapture = captureEvidence(
+    { id: 'route:/old', path: '/old' },
+    { target: 'route:/items', path: '/items', sourcePath: '/old' },
+    readyTarget, undefined, autoTelemetryRecords, []
+  );
+  assert.equal(autoTelemetryCapture.outcome, 'transition');
+  assert.equal(autoTelemetryCapture.transition, 'verified');
+  assert.equal(autoTelemetryCapture.targetReady, true);
+  assert.equal(autoTelemetryCapture.backgroundFailure?.message, 'GET /api/telemetry → 501');
+  const autoTelemetryEdge = redirectEdgeOutcome(autoTelemetryRecords, readyTarget, { sourcePath: '/old', actualPath: '/items' });
+  assert.equal(autoTelemetryEdge.targetReady, true);
+  assert.equal(autoTelemetryEdge.targetReason, undefined);
+  assert.equal(autoTelemetryEdge.backgroundFailure?.message, 'GET /api/telemetry → 501');
 
   // Source error redirecting to an unready destination never claims readiness without evidence.
   const unreadyTarget = {
@@ -129,9 +184,9 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(unreadyEdge.targetReason, 'The route still displays a loading screen');
   assert.equal(unreadyEdge.sourceFailure?.message, 'GET /api/items/id-1 → 501');
 
-  // Target failure on the destination remains attributed to the destination (observed-url).
+  // Target failure on the destination without successful list data remains blocking (observed-url).
   const targetFailRecords = [
-    { sequence: 1, method: 'GET', path: '/api/session', status: 200, sourcePath: '/old', documentId: 'doc-1', initialDocument: true },
+    { sequence: 1, method: 'GET', path: '/api/session', status: 200, sourcePath: '/old', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
     { sequence: 2, method: 'GET', path: '/api/target', status: 501, sourcePath: '/target', documentId: 'doc-1', initialDocument: true }
   ];
   const targetFailCapture = captureEvidence(
@@ -143,6 +198,7 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(targetFailCapture.transition, 'observed-url');
   assert.equal(targetFailCapture.targetReady, false);
   assert.equal(targetFailCapture.sourceFailure, undefined);
+  assert.equal(targetFailCapture.backgroundFailure, undefined);
   assert.equal(targetFailCapture.unattributedFailure, undefined);
   assert.equal(targetFailCapture.reason.message, 'GET /api/target → 501');
 
@@ -153,10 +209,30 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(targetFailEdge.targetReady, false);
   assert.equal(targetFailEdge.targetReason, 'GET /api/target → 501');
   assert.equal(targetFailEdge.sourceFailure, undefined);
+  assert.equal(targetFailEdge.backgroundFailure, undefined);
+
+  // Paired counterexample: destination has a 200 config request AND a blocking list 501 that keeps observed.ready false.
+  const blockedListRecords = [
+    { sequence: 1, method: 'GET', path: '/api/config', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true },
+    { sequence: 2, method: 'GET', path: '/api/items', status: 501, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
+  ];
+  const blockedListCapture = captureEvidence(
+    { id: 'route:/old', path: '/old' },
+    { target: 'route:/items', path: '/items', sourcePath: '/old' },
+    unreadyTarget, undefined, blockedListRecords, []
+  );
+  assert.equal(blockedListCapture.transition, 'observed-url');
+  assert.equal(blockedListCapture.targetReady, false);
+  assert.equal(blockedListCapture.backgroundFailure, undefined);
+  assert.equal(blockedListCapture.reason.message, 'GET /api/items → 501');
+  const blockedListEdge = redirectEdgeOutcome(blockedListRecords, unreadyTarget, { sourcePath: '/old', actualPath: '/items' });
+  assert.equal(blockedListEdge.targetReady, false);
+  assert.equal(blockedListEdge.targetReason, 'GET /api/items → 501');
+  assert.equal(blockedListEdge.backgroundFailure, undefined);
 
   // Both source and target failures keep both facts without claiming target readiness.
   const bothFailRecords = [
-    { sequence: 1, method: 'GET', path: '/api/items/id-1', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true },
+    { sequence: 1, method: 'GET', path: '/api/items/id-1', status: 501, sourcePath: '/items/id-1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
     { sequence: 2, method: 'GET', path: '/api/items', status: 501, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
   ];
   const bothFail = captureEvidence(detailNode, expectedRedirect, readyTarget, undefined, bothFailRecords, []);
@@ -166,17 +242,17 @@ test('source data failure before redirect is separated from destination readines
   assert.equal(bothFail.reason.message, 'GET /api/items → 501');
 });
 
-test('ambiguous, full-document and same-URL request attribution preserve confirmed facts only', () => {
-  // Missing Referer on same-document redirect is ambiguous: never claim readiness or blame target.
-  const noReferer = [
-    { sequence: 1, method: 'GET', path: '/api/ambiguous', status: 501, documentId: 'doc-1', initialDocument: true },
+test('ambiguous, full-document and same-URL request attribution require verified document and route witnesses', () => {
+  // Missing route/document witness on redirect is ambiguous: never claim readiness or blame source/target.
+  const unattributed = [
+    { sequence: 1, method: 'GET', path: '/api/ambiguous', status: 501 },
     { sequence: 2, method: 'GET', path: '/api/items', status: 200, sourcePath: '/items', documentId: 'doc-1', initialDocument: true }
   ];
   const targetObs = { id: 'route:/items', pathname: '/items', ready: true, status: { documentId: 'doc-1' } };
   const ambiguousCapture = captureEvidence(
     { id: 'route:/items/:id', path: '/items/:id' },
     { target: 'route:/items', path: '/items', sourcePath: '/items/id-1' },
-    targetObs, undefined, noReferer, []
+    targetObs, undefined, unattributed, []
   );
   assert.equal(ambiguousCapture.outcome, 'blocked');
   assert.equal(ambiguousCapture.transition, 'observed-url');
@@ -184,26 +260,28 @@ test('ambiguous, full-document and same-URL request attribution preserve confirm
   assert.equal(ambiguousCapture.sourceFailure, undefined);
   assert.equal(ambiguousCapture.unattributedFailure?.message, 'GET /api/ambiguous → 501');
 
-  const ambiguousEdge = redirectEdgeOutcome(noReferer, targetObs, { sourcePath: '/items/id-1', actualPath: '/items' });
+  const ambiguousEdge = redirectEdgeOutcome(unattributed, targetObs, { sourcePath: '/items/id-1', actualPath: '/items' });
   assert.equal(ambiguousEdge.targetReady, false);
   assert.equal(ambiguousEdge.targetReason, undefined);
   assert.equal(ambiguousEdge.sourceFailure, undefined);
   assert.equal(ambiguousEdge.unattributedFailure?.message, 'GET /api/ambiguous → 501');
 
-  // A root-path Referer arriving AFTER target requests is treated as ambiguous (guards origin-only Referrer-Policy).
-  const rootLate = partitionRequests([
-    { sequence: 1, method: 'GET', path: '/api/target', status: 200, sourcePath: '/done', documentId: 'doc-1', initialDocument: true },
-    { sequence: 2, method: 'GET', path: '/api/late', status: 501, sourcePath: '/', documentId: 'doc-1', initialDocument: true }
-  ], { sourcePath: '/', actualPath: '/done', actualDocumentId: 'doc-1' });
-  assert.equal(rootLate.source.length, 0);
-  assert.equal(rootLate.ambiguous.length, 1);
+  // Record with only sourcePath (no verified documentId) OR only documentId (no verified sourcePath) is ambiguous.
+  const partialWitness = partitionRequests([
+    { sequence: 1, method: 'GET', path: '/api/only-path', status: 501, sourcePath: '/' },
+    { sequence: 2, method: 'GET', path: '/api/only-doc', status: 501, documentId: 'doc-2', initialDocument: false }
+  ], { sourcePath: '/', actualPath: '/done', actualDocumentId: 'doc-2' });
+  assert.equal(partialWitness.source.length, 0);
+  assert.equal(partialWitness.target.length, 0);
+  assert.equal(partialWitness.ambiguous.length, 2);
 
-  // Full-document navigation distinguishes initial document from destination document even without Referer.
+  // Full-document navigation distinguishes initial document from destination document when both have witnesses.
   const fullReload = partitionRequests([
-    { sequence: 1, method: 'GET', path: '/api/source', status: 501, documentId: 'doc-1', initialDocument: true },
-    { sequence: 2, method: 'GET', path: '/api/dest', status: 200, documentId: 'doc-2', initialDocument: false }
+    { sequence: 1, method: 'GET', path: '/api/source', status: 501, sourcePath: '/items/1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true },
+    { sequence: 2, method: 'GET', path: '/api/keepalive', status: 501, sourcePath: '/items/1', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: false },
+    { sequence: 3, method: 'GET', path: '/api/dest', status: 200, sourcePath: '/items', documentId: 'doc-2', initialDocument: false }
   ], { sourcePath: '/items/1', actualPath: '/items', actualDocumentId: 'doc-2' });
-  assert.equal(fullReload.source.length, 1);
+  assert.equal(fullReload.source.length, 2);
   assert.equal(fullReload.target.length, 1);
   assert.equal(fullReload.ambiguous.length, 0);
 
@@ -213,7 +291,7 @@ test('ambiguous, full-document and same-URL request attribution preserve confirm
     { target: 'route:/done', path: '/done', sourcePath: '/done' },
     { id: 'route:/done', pathname: '/done', ready: true, status: { documentId: 'doc-1' } },
     'data:image/png;base64,pixels',
-    [{ sequence: 1, method: 'GET', path: '/api/details', status: 501, sourcePath: '/done', documentId: 'doc-1', initialDocument: true }],
+    [{ sequence: 1, method: 'GET', path: '/api/details', status: 501, sourcePath: '/done', documentId: 'doc-1', initialDocument: true, settledBeforeNavigation: true }],
     []
   );
   assert.equal(sameUrl.outcome, 'blocked');

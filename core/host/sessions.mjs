@@ -19,7 +19,10 @@ export async function openSession({ project, host, generation, scenario, timeout
   const responses = new Map();
   const exchanges = [];
   let serial = 0;
+  let eventSeq = 0;
   let initialDocumentId;
+  let currentDocumentId;
+  const documents = new Map();
   const waiters = new Set();
   let loading = false;
   let disposed = false;
@@ -54,21 +57,33 @@ export async function openSession({ project, host, generation, scenario, timeout
       const result = await protocol.handle(message, request.headers['x-screen-canvas-document']);
       return json(response, result.status, result.body);
     }
+    if (pathname === '/__screen_canvas/observe') {
+      if (request.method !== 'POST' || request.headers['content-type'] !== 'application/json') {
+        return json(response, 405, { error: 'Expected an observation POST' });
+      }
+      const doc = documents.get(request.headers['x-screen-canvas-observe']);
+      if (!doc) return json(response, 409, { error: 'Unknown preview document' });
+      const message = await body(request);
+      if (message && typeof message.requestId === 'string' && typeof message.beforeNavigation === 'boolean') {
+        const target = requests.find(item => item.documentId === doc.id && item.requestId === message.requestId);
+        if (target && target.settledBeforeNavigation === undefined) {
+          target.settledBeforeNavigation = message.beforeNavigation;
+        }
+      }
+      return json(response, 200, null);
+    }
     if ((project.adapter.apiPrefixes ?? ['/api']).some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'))) {
       const sequence = ++serial;
-      let sourcePath;
-      if (typeof request.headers.referer === 'string') {
-        try {
-          const referer = new URL(request.headers.referer);
-          if (referer.origin === origin) sourcePath = referer.pathname;
-        } catch {}
-      }
-      const documentId = protocol.stamp().documentId;
+      const doc = documents.get(request.headers['x-screen-canvas-req-doc']);
+      const rawPath = request.headers['x-screen-canvas-req-path'];
+      const sourcePath = doc && typeof rawPath === 'string' && rawPath.length <= 240 && /^\/(?!\/)[^\s?#\\]*$/.test(rawPath)
+        ? rawPath : undefined;
+      const rawId = request.headers['x-screen-canvas-req-id'];
+      const requestId = doc && typeof rawId === 'string' && rawId.length <= 32 ? rawId : undefined;
       const record = {
         sequence, method: request.method, path: pathname, status: 0,
-        ...(sourcePath ? { sourcePath } : {}),
-        ...(documentId ? { documentId } : {}),
-        ...(initialDocumentId && documentId ? { initialDocument: documentId === initialDocumentId } : {})
+        ...(doc && sourcePath ? { sourcePath, documentId: doc.id, initialDocument: doc.initial } : {}),
+        ...(requestId ? { requestId } : {})
       };
       if (requests.length >= 250) requests.shift();
       requests.push(record);
@@ -84,6 +99,10 @@ export async function openSession({ project, host, generation, scenario, timeout
       try {
         const result = await mock?.(input) ?? generatedMock(input);
         record.status = result?.status ?? (result ? 200 : 501);
+        record.completedSeq = ++eventSeq;
+        if (doc && currentDocumentId && doc.id !== currentDocumentId && record.settledBeforeNavigation === undefined) {
+          record.settledBeforeNavigation = false;
+        }
         if (result && record.status >= 200 && record.status < 300) {
           if (responses.size >= 250) responses.delete(responses.keys().next().value);
           responses.set(request.method + ' ' + pathname, result.body);
@@ -94,6 +113,10 @@ export async function openSession({ project, host, generation, scenario, timeout
         return json(response, record.status, result ? result.body : { error: 'No local mock for ' + request.method + ' ' + pathname });
       } catch (error) {
         record.status = 500;
+        record.completedSeq = ++eventSeq;
+        if (doc && currentDocumentId && doc.id !== currentDocumentId && record.settledBeforeNavigation === undefined) {
+          record.settledBeforeNavigation = false;
+        }
         return json(response, 500, { error: error.message });
       }
     }
@@ -102,8 +125,24 @@ export async function openSession({ project, host, generation, scenario, timeout
       const page = await host.transformIndexHtml(request.url, await readFile(indexFile, 'utf8'));
       if (response.destroyed || disposed) return;
       const registration = protocol.newDocument();
+      const observeToken = randomUUID();
+      const issuedSeq = ++eventSeq;
+      const isInitial = !initialDocumentId;
       initialDocumentId ??= registration.stamp.documentId;
-      const html = inject(page, bootstrap, { ...registration, browser: project.adapter.browser ?? null });
+      currentDocumentId = registration.stamp.documentId;
+      if (documents.size >= 50) documents.delete(documents.keys().next().value);
+      documents.set(observeToken, { id: registration.stamp.documentId, initial: isInitial, issuedSeq });
+      for (const item of requests) {
+        if (item.documentId && item.documentId !== currentDocumentId && item.settledBeforeNavigation === undefined &&
+            item.completedSeq && item.completedSeq < issuedSeq) {
+          item.settledBeforeNavigation = true;
+        }
+      }
+      const html = inject(page, bootstrap, {
+        ...registration, observeToken,
+        apiPrefixes: project.adapter.apiPrefixes ?? ['/api'],
+        browser: project.adapter.browser ?? null
+      });
       response.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
