@@ -142,3 +142,45 @@ test('expired opens release their slots without leaving late listeners', { timeo
   await worker.stop();
   await assert.rejects(fetch(next.origin));
 });
+
+test('sessions record same-origin request attribution and document transitions without leaking internal fields', { timeout: 15_000 }, async t => {
+  const root = await makeHost(t, {
+    'screen-canvas.config.mjs': `export default {
+      createMocks: () => ({ path }) => path === '/api/items/1' ? { status: 501, body: {} } : { status: 200, body: { ok: true } }
+    };`
+  });
+  const child = fork(new URL('./helpers/node-worker.mjs', import.meta.url), {
+    cwd: root, stdio: ['ignore', 'ignore', 'inherit', 'ipc']
+  });
+  const worker = new ProjectWorker({
+    on: child.on.bind(child), once: child.once.bind(child),
+    postMessage: child.send.bind(child), kill: child.kill.bind(child)
+  }, 15, () => {});
+  t.after(() => worker.stop());
+  await worker.call('start');
+  const session = await worker.call('open', { nodeId: 'route:/' });
+  const loadDoc = async pathname => {
+    const html = await (await fetch(session.origin + pathname, {
+      headers: { accept: 'text/html', 'x-screen-canvas-navigation': session.navigationKey }
+    })).text();
+    return JSON.parse(/__screenCanvasBoot=(.*?);\(\(\)/s.exec(html)[1]).stamp.documentId;
+  };
+  const doc1 = await loadDoc('/items/1');
+  await fetch(session.origin + '/api/items/1', { headers: { referer: session.origin + '/items/1' } });
+  await fetch(session.origin + '/api/external-ref', { headers: { referer: 'https://example.invalid/secret' } });
+  const doc2 = await loadDoc('/items');
+  assert.notEqual(doc1, doc2);
+  await fetch(session.origin + '/api/items', { headers: { referer: session.origin + '/items' } });
+  const records = await worker.call('requests', { id: session.id });
+  assert.equal(records.length, 3);
+  assert.equal(records[0].sourcePath, '/items/1');
+  assert.equal(records[0].documentId, doc1);
+  assert.equal(records[0].initialDocument, true);
+  assert.equal(records[0].status, 501);
+  assert.equal(records[1].sourcePath, undefined);
+  assert.equal(records[1].documentId, doc1);
+  assert.equal(records[2].sourcePath, '/items');
+  assert.equal(records[2].documentId, doc2);
+  assert.equal(records[2].initialDocument, false);
+  await worker.stop();
+});

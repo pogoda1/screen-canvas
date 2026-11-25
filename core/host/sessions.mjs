@@ -19,6 +19,7 @@ export async function openSession({ project, host, generation, scenario, timeout
   const responses = new Map();
   const exchanges = [];
   let serial = 0;
+  let initialDocumentId;
   const waiters = new Set();
   let loading = false;
   let disposed = false;
@@ -55,7 +56,20 @@ export async function openSession({ project, host, generation, scenario, timeout
     }
     if ((project.adapter.apiPrefixes ?? ['/api']).some(prefix => pathname === prefix || pathname.startsWith(prefix + '/'))) {
       const sequence = ++serial;
-      const record = { sequence, method: request.method, path: pathname, status: 0 };
+      let sourcePath;
+      if (typeof request.headers.referer === 'string') {
+        try {
+          const referer = new URL(request.headers.referer);
+          if (referer.origin === origin) sourcePath = referer.pathname;
+        } catch {}
+      }
+      const documentId = protocol.stamp().documentId;
+      const record = {
+        sequence, method: request.method, path: pathname, status: 0,
+        ...(sourcePath ? { sourcePath } : {}),
+        ...(documentId ? { documentId } : {}),
+        ...(initialDocumentId && documentId ? { initialDocument: documentId === initialDocumentId } : {})
+      };
       if (requests.length >= 250) requests.shift();
       requests.push(record);
       if (loading) await new Promise(resolve => {
@@ -88,6 +102,7 @@ export async function openSession({ project, host, generation, scenario, timeout
       const page = await host.transformIndexHtml(request.url, await readFile(indexFile, 'utf8'));
       if (response.destroyed || disposed) return;
       const registration = protocol.newDocument();
+      initialDocumentId ??= registration.stamp.documentId;
       const html = inject(page, bootstrap, { ...registration, browser: project.adapter.browser ?? null });
       response.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',

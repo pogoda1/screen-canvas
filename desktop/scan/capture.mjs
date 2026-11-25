@@ -134,14 +134,14 @@ function healthy(capture) {
   return !capture.crash && !capture.contents.isDestroyed();
 }
 
-export async function refreshScreen(capture, graph, signal, waited) {
+export async function refreshScreen(capture, graph, signal, waited, forCapture = false) {
   // The host may report the HTTP response before the renderer applies it.
   if (waited && healthy(capture)) {
     try { await waitForPaint(capture.contents, signal, FRAME_MS); }
     catch { signal.throwIfAborted(); }
   }
-  const observation = await readScreen(capture, graph, signal, false, 350);
-  const diagnostic = blocked(observation, false);
+  const observation = await readScreen(capture, graph, signal, forCapture, 350);
+  const diagnostic = blocked(observation, forCapture);
   return { ...observation, ready: Boolean(healthy(capture) && observation.status?.ready && !diagnostic), diagnostic };
 }
 

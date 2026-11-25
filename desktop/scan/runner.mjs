@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { actionOriginReason, captureEvidence, captureExpectation, edgeEvidence, isMultiStepAction, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
+import { actionOriginReason, captureEvidence, captureExpectation, edgeEvidence, isMultiStepAction, localRequests, observedRedirect, redirectEdgeOutcome, requestFailure } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches, refreshScreen } from './capture.mjs';
 import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
@@ -97,6 +97,9 @@ export async function crawlGraph(worker, graph, signal, update) {
         screenshot = undefined;
         ({ observed, screenshot } = await captureScreen(capture, graph, jobSignal, node.id));
         settled = await settleRequests(capture, jobSignal);
+      }
+      if (!screenshot && !jobSignal.aborted && settled.waited) {
+        observed = await refreshScreen(capture, graph, jobSignal, true, true);
       }
       const redirect = expected.inferRedirect && observedRedirect(graph, node, observed);
       if (redirect) expected = { ...redirect, sourcePath: capture.initialPath };
@@ -246,13 +249,13 @@ export async function crawlGraph(worker, graph, signal, update) {
         const evidence = edgeEvidence(edge, observed?.id, requests, reason, actualPath);
         if (moved) {
           evidence.transitionObserved = true;
-          const failure = redirects && requestFailure(entries);
-          const pending = redirects && entries.some(request => request.status === 0);
-          evidence.targetReady = Boolean(observed?.ready && !failure && !pending);
-          if (failure) evidence.targetReason = failure.message;
-          else if (targetFailure) evidence.targetReason = targetFailure.message;
-          else if (pending) evidence.targetReason = 'A local request did not finish within the capture budget';
-          else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
+          if (redirects) {
+            Object.assign(evidence, redirectEdgeOutcome(entries, observed, { sourcePath: initialPath, actualPath }));
+          } else {
+            evidence.targetReady = Boolean(observed?.ready);
+            if (targetFailure) evidence.targetReason = targetFailure.message;
+            else if (observed?.diagnostic) evidence.targetReason = observed.diagnostic.message;
+          }
         }
         if (requestCheck) evidence.requestCheck = requestCheck;
         if (effect && !moved) evidence.actionEffect = true;

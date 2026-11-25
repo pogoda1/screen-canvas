@@ -86,20 +86,90 @@ export function localRequests(records) {
   ).slice(-250).map(({ method, path, status }) => ({ method, path, status }));
 }
 
-export function captureEvidence(node, expected, observed, screenshot, requests, consoleCodes) {
-  const http = requestFailure(requests);
-  const pending = !http && requests.some(request => request.status === 0) && {
-    code: 'request-pending', message: 'A local request did not finish within the capture budget'
+export function partitionRequests(records, { sourcePath, actualPath, actualDocumentId } = {}) {
+  const changedPath = Boolean(exactLocalPath(sourcePath) && exactLocalPath(actualPath) && actualPath !== sourcePath);
+  const changedDocument = Boolean(actualDocumentId &&
+    records.some(record => record.initialDocument === true && record.documentId && record.documentId !== actualDocumentId));
+  if (!changedPath && !changedDocument) {
+    return { source: [], target: [...records], ambiguous: [] };
+  }
+  const source = [];
+  const target = [];
+  const ambiguous = [];
+  const isTarget = record => {
+    if (changedDocument && record.documentId) {
+      return record.documentId === actualDocumentId &&
+        (!changedPath || !exactLocalPath(record.sourcePath) || record.sourcePath === actualPath);
+    }
+    return changedPath && exactLocalPath(record.sourcePath) && record.sourcePath === actualPath;
   };
-  const failure = http || pending;
+  let firstTargetSequence;
+  for (const record of records) {
+    if (isTarget(record) && Number.isInteger(record.sequence)) {
+      firstTargetSequence = firstTargetSequence === undefined ? record.sequence : Math.min(firstTargetSequence, record.sequence);
+    }
+  }
+  for (const record of records) {
+    if (isTarget(record)) {
+      target.push(record);
+      continue;
+    }
+    const fromSourceDoc = changedDocument && record.initialDocument === true &&
+      record.documentId && record.documentId !== actualDocumentId &&
+      (!changedPath || !exactLocalPath(record.sourcePath) || record.sourcePath === sourcePath);
+    const fromSourcePath = !changedDocument && changedPath &&
+      exactLocalPath(record.sourcePath) && record.sourcePath === sourcePath &&
+      (firstTargetSequence === undefined || !Number.isInteger(record.sequence) || record.sequence < firstTargetSequence);
+    if (fromSourceDoc || fromSourcePath) source.push(record);
+    else ambiguous.push(record);
+  }
+  return { source, target, ambiguous };
+}
+
+function requestProblem(records) {
+  const http = requestFailure(records);
+  if (http) return http;
+  if (records.some(request => request.status === 0)) {
+    return { code: 'request-pending', message: 'A local request did not finish within the capture budget' };
+  }
+}
+
+export function redirectEdgeOutcome(entries, observed, { sourcePath, actualPath } = {}) {
+  const partitioned = partitionRequests(entries, {
+    sourcePath, actualPath, actualDocumentId: observed?.status?.documentId
+  });
+  const sourceFailure = requestProblem(partitioned.source);
+  const targetFailure = requestProblem(partitioned.target);
+  const ambiguousFailure = requestProblem(partitioned.ambiguous);
+  const targetReady = Boolean(observed?.ready && !targetFailure && !ambiguousFailure);
+  const targetReason = targetFailure?.message ?? observed?.diagnostic?.message;
+  return {
+    targetReady,
+    ...(targetReason ? { targetReason } : {}),
+    ...(sourceFailure ? { sourceFailure } : {}),
+    ...(!targetFailure && ambiguousFailure ? { unattributedFailure: ambiguousFailure } : {})
+  };
+}
+
+export function captureEvidence(node, expected, observed, screenshot, requests, consoleCodes) {
   const path = exactLocalPath(observed.pathname) ? observed.pathname : undefined;
   const actualNode = observed.id;
   const matches = actualNode === expected.target && path === expected.path;
   const expectsTransition = expected.target !== node.id || expected.path !== expected.sourcePath;
-  const changed = path && (path !== expected.sourcePath || actualNode && actualNode !== node.id);
-  const targetReady = Boolean(observed.ready && matches && !failure);
-  const transition = matches && expectsTransition
-    ? targetReady ? 'verified' : 'observed-url'
+  const changed = Boolean(path && (path !== expected.sourcePath || actualNode && actualNode !== node.id));
+  const partitioned = changed ? partitionRequests(requests, {
+    sourcePath: expected.sourcePath, actualPath: path, actualDocumentId: observed.status?.documentId
+  }) : { source: [], target: requests, ambiguous: [] };
+  const sourceFailure = requestProblem(partitioned.source);
+  const targetFailure = requestProblem(partitioned.target);
+  const ambiguousFailure = requestProblem(partitioned.ambiguous);
+  const sourceRedirect = Boolean(changed && sourceFailure && !targetFailure && !ambiguousFailure);
+  const failure = targetFailure || ambiguousFailure || sourceFailure;
+  const targetReady = sourceRedirect
+    ? Boolean(observed.ready && actualNode && path)
+    : Boolean(observed.ready && matches && !failure);
+  const transition = sourceRedirect ? 'source-error'
+    : matches && expectsTransition ? (targetReady ? 'verified' : 'observed-url')
     : changed && !matches ? 'unexpected' : undefined;
   const different = !matches && (Boolean(observed.ready) || changed);
   const mismatch = different && { code: 'different-screen', message: 'The observed screen differs from the expected destination' };
@@ -121,5 +191,7 @@ export function captureEvidence(node, expected, observed, screenshot, requests, 
   return { outcome, phase, expectedNode: expected.target, expectedPath: expected.path,
     ...(actualNode ? { actualNode } : {}), ...(path ? { actualPath: path } : {}),
     targetReady, ...(transition ? { transition } : {}),
+    ...(sourceFailure ? { sourceFailure } : {}),
+    ...(!targetFailure && ambiguousFailure ? { unattributedFailure: ambiguousFailure } : {}),
     ...(outcome === 'special-state' ? { state: expected.state } : {}), reason, observations };
 }

@@ -17,8 +17,17 @@ export const captureLabels = {
 export const transitionLabels = {
   verified: 'Переход подтверждён',
   'observed-url': 'Путь наблюдался, цель не готова',
+  'source-error': 'Переход после ошибки источника',
   unexpected: 'Незаявленное назначение'
 };
+
+export function transitionLabel(report) {
+  if (!report?.transition) return undefined;
+  if (report.transition === 'observed-url' && report.unattributedFailure) {
+    return 'Путь наблюдался, источник ошибки не определён';
+  }
+  return transitionLabels[report.transition];
+}
 
 export function observedTarget(edge) {
   const evidence = edge.evidence;
@@ -150,8 +159,8 @@ export function connectGraph(viewport, onSelect) {
       const pair = [edge.source, target].sort().join('\n');
       const count = counts.get(pair) ?? 0;
       counts.set(pair, count + 1);
-      const { status, origin, actionFailure, transitionObserved, targetReady } = edge.evidence;
-      const appearance = actionFailure || transitionObserved && !targetReady ? 'unverified' : status;
+      const { status, origin, actionFailure, sourceFailure, unattributedFailure, transitionObserved, targetReady } = edge.evidence;
+      const appearance = actionFailure || sourceFailure || unattributedFailure || transitionObserved && !targetReady ? 'unverified' : status;
       const point = origin && from.picture && {
         x: from.x + from.picture.offsetLeft + origin.x * from.picture.offsetWidth,
         y: from.y + from.picture.offsetTop + origin.y * from.picture.offsetHeight
@@ -252,7 +261,7 @@ export function connectGraph(viewport, onSelect) {
         picture.textContent = summary ?? 'Ожидает проверки';
       }
       caption.hidden = Boolean(valid && !report?.state);
-      caption.textContent = [transitionLabels[report?.transition] ?? status ?? 'Из кода',
+      caption.textContent = [transitionLabel(report) ?? status ?? 'Из кода',
         report?.state, report?.transition !== 'verified' && destination].filter(Boolean).join(' · ');
     }
     drawConnections();

@@ -22,6 +22,8 @@ export interface Evidence {
   targetReason?: string;
   requestCheck?: 'verified' | 'unverified';
   actionFailure?: Diagnostic;
+  sourceFailure?: Diagnostic;
+  unattributedFailure?: Diagnostic;
   backgroundFailure?: Diagnostic;
   actionPending?: boolean;
   actionEffect?: boolean;
@@ -48,7 +50,9 @@ export interface CaptureEvidence {
   actualNode?: string;
   actualPath?: string;
   targetReady: boolean;
-  transition?: 'verified' | 'observed-url' | 'unexpected';
+  transition?: 'verified' | 'observed-url' | 'source-error' | 'unexpected';
+  sourceFailure?: Diagnostic;
+  unattributedFailure?: Diagnostic;
   state?: string;
   reason: Diagnostic;
   observations: Diagnostic[];

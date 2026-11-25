@@ -1,4 +1,4 @@
-import { captureLabels, connectionTarget, evidenceLabels, observedTarget, transitionLabels } from './graph.js';
+import { captureLabels, connectionTarget, evidenceLabels, observedTarget, transitionLabel } from './graph.js';
 
 const phases = {
   navigation: 'Документ',
@@ -26,14 +26,22 @@ function disclosure(title, entries) {
 function showCapture(details, report) {
   const section = document.createElement('section');
   section.className = 'capture-details';
+  const readiness = report.transition === 'source-error'
+    ? report.targetReady ? 'Назначение готово' : 'Готовность назначения не подтверждена'
+    : report.targetReady ? 'Экран готов' : 'Готовность экрана не подтверждена';
   section.append(
     paragraph([captureLabels[report.outcome], phases[report.phase], report.state].filter(Boolean).join(' · ')),
     paragraph('Ожидалось · ' + [report.expectedNode, report.expectedPath].filter(Boolean).join(' · ')),
     paragraph('Наблюдалось · ' + ([report.actualNode, report.actualPath].filter(Boolean).join(' · ') || '—')),
-    paragraph(report.targetReady ? 'Экран готов' : 'Готовность экрана не подтверждена'),
-    paragraph(report.reason.message, 'diagnostic')
+    paragraph(readiness)
   );
-  if (report.transition) section.append(paragraph(transitionLabels[report.transition]));
+  if (report.sourceFailure) {
+    section.append(paragraph('Ошибка источника · ' + report.sourceFailure.message, 'diagnostic'));
+  }
+  if (!report.sourceFailure || report.reason.message !== report.sourceFailure.message) {
+    section.append(paragraph(report.reason.message, 'diagnostic'));
+  }
+  if (report.transition) section.append(paragraph(transitionLabel(report)));
   if (report.observations.length) section.append(disclosure('Дополнительные наблюдения',
     report.observations.map(observation => paragraph(observation.message, 'diagnostic'))));
   details.append(section);
@@ -80,6 +88,12 @@ function directionGroup(title, edges, neighborId, neighbors) {
     if (evidence.transitionObserved) {
       item.append(paragraph(evidence.targetReady ? 'Цель перехода готова' : 'Готовность цели перехода не подтверждена'));
       if (evidence.targetReason) item.append(paragraph(evidence.targetReason, 'diagnostic'));
+    }
+    if (evidence.sourceFailure) {
+      item.append(paragraph('Ошибка источника · ' + evidence.sourceFailure.message, 'diagnostic'));
+    }
+    if (evidence.unattributedFailure) {
+      item.append(paragraph('Неуспешный запрос при переходе · ' + evidence.unattributedFailure.message, 'diagnostic'));
     }
     const originReasons = {
       automatic: 'автоматический переход',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { transitionLabel } from '../desktop/shell/graph.js';
 import { showNode } from '../desktop/shell/selection.js';
 
 function createElement(tag) {
@@ -162,5 +163,198 @@ test('selection panel renders multi-step origin reason separately from single-cl
     assert.ok(texts(rows.get('different')).includes('Источник стрелки · Экран · роль или состояние отличаются от кадра'));
     assert.ok(texts(rows.get('missing-frame')).includes('Источник стрелки · Экран · элемент на исходном кадре не подтверждён'));
     assert.ok(texts(rows.get('auto')).includes('Источник стрелки · Экран · автоматический переход'));
+  });
+});
+
+test('selection panel and transition labels separate source-error redirects, target failures, ambiguous errors, and telemetry controls', () => {
+  const sourceReadyNode = {
+    id: 'route:/items/:id',
+    path: '/items/:id',
+    label: '/items/:id',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: true,
+      transition: 'source-error',
+      sourceFailure: { code: 'mock-response', message: 'GET /api/items/id-1 → 501' },
+      reason: { code: 'mock-response', message: 'GET /api/items/id-1 → 501' },
+      observations: []
+    }
+  };
+  const sourceUnreadyNode = {
+    id: 'route:/items/:id',
+    path: '/items/:id',
+    label: '/items/:id',
+    capture: {
+      ...sourceReadyNode.capture,
+      targetReady: false,
+      observations: [{ code: 'loading-timeout', message: 'The route still displays a loading screen' }]
+    }
+  };
+  const targetFailNode = {
+    id: 'route:/old',
+    path: '/old',
+    label: '/old',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/target',
+      expectedPath: '/target',
+      actualNode: 'route:/target',
+      actualPath: '/target',
+      targetReady: false,
+      transition: 'observed-url',
+      reason: { code: 'mock-response', message: 'GET /api/target → 501' },
+      observations: []
+    }
+  };
+  const ambiguousNode = {
+    id: 'route:/ambiguous',
+    path: '/ambiguous',
+    label: '/ambiguous',
+    capture: {
+      outcome: 'blocked',
+      phase: 'request',
+      expectedNode: 'route:/items',
+      expectedPath: '/items',
+      actualNode: 'route:/items',
+      actualPath: '/items',
+      targetReady: false,
+      transition: 'observed-url',
+      unattributedFailure: { code: 'mock-response', message: 'GET /api/unknown → 501' },
+      reason: { code: 'mock-response', message: 'GET /api/unknown → 501' },
+      observations: []
+    }
+  };
+
+  assert.equal(transitionLabel(sourceReadyNode.capture), 'Переход после ошибки источника');
+  assert.equal(transitionLabel(targetFailNode.capture), 'Путь наблюдался, цель не готова');
+  assert.equal(transitionLabel(ambiguousNode.capture), 'Путь наблюдался, источник ошибки не определён');
+
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [sourceReadyNode, { id: 'route:/items', path: '/items', label: '/items' }],
+      edges: [{
+        id: 'catch-redirect',
+        source: 'route:/items/:id',
+        target: 'route:/items',
+        label: '/items',
+        action: 'redirect',
+        expectedPath: '/items',
+        evidence: {
+          status: 'unverified',
+          expectedPath: '/items',
+          actualPath: '/items',
+          actualTarget: 'route:/items',
+          transitionObserved: true,
+          targetReady: true,
+          sourceFailure: { code: 'mock-response', message: 'GET /api/items/id-1 → 501' },
+          originReason: 'automatic',
+          reason: 'The destination was observed, but the automatic branch was not proved'
+        }
+      }]
+    }, 'route:/items/:id');
+    const all = texts(container);
+    assert.ok(all.includes('Ошибка источника · GET /api/items/id-1 → 501'));
+    assert.ok(all.includes('Переход после ошибки источника'));
+    assert.ok(all.includes('Наблюдалось · route:/items · /items'));
+    assert.ok(all.includes('Назначение готово'));
+    assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    const edgeTexts = texts(findEdgeRows(container).get('catch-redirect'));
+    assert.ok(edgeTexts.includes('Цель перехода готова'));
+    assert.ok(edgeTexts.includes('Ошибка источника · GET /api/items/id-1 → 501'));
+    assert.ok(!edgeTexts.includes('Готовность цели перехода не подтверждена'));
+  });
+
+  withFakeDocument(container => {
+    showNode(container, { nodes: [sourceUnreadyNode], edges: [] }, 'route:/items/:id');
+    const all = texts(container);
+    assert.ok(all.includes('Ошибка источника · GET /api/items/id-1 → 501'));
+    assert.ok(all.includes('Готовность назначения не подтверждена'));
+    assert.ok(!all.includes('Назначение готово'));
+  });
+
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [ambiguousNode, { id: 'route:/items', path: '/items', label: '/items' }],
+      edges: [{
+        id: 'ambiguous-redirect',
+        source: 'route:/ambiguous',
+        target: 'route:/items',
+        label: '/items',
+        action: 'redirect',
+        expectedPath: '/items',
+        evidence: {
+          status: 'unverified',
+          expectedPath: '/items',
+          actualPath: '/items',
+          actualTarget: 'route:/items',
+          transitionObserved: true,
+          targetReady: false,
+          unattributedFailure: { code: 'mock-response', message: 'GET /api/unknown → 501' },
+          originReason: 'automatic'
+        }
+      }]
+    }, 'route:/ambiguous');
+    const all = texts(container);
+    assert.ok(all.includes('Путь наблюдался, источник ошибки не определён'));
+    assert.ok(all.includes('Готовность экрана не подтверждена'));
+    assert.ok(!all.includes('Путь наблюдался, цель не готова'));
+    const edgeTexts = texts(findEdgeRows(container).get('ambiguous-redirect'));
+    assert.ok(edgeTexts.includes('Готовность цели перехода не подтверждена'));
+    assert.ok(edgeTexts.includes('Неуспешный запрос при переходе · GET /api/unknown → 501'));
+    assert.ok(!edgeTexts.some(line => line.startsWith('Ошибка источника')));
+  });
+
+  withFakeDocument(container => {
+    showNode(container, {
+      nodes: [
+        { id: 'route:/', path: '/', label: '/' },
+        { id: 'route:/done', path: '/done', label: '/done' }
+      ],
+      edges: [
+        {
+          id: 'late-target-fail',
+          source: 'route:/',
+          target: 'route:/done',
+          label: 'Submit',
+          evidence: {
+            status: 'unverified',
+            actualPath: '/done',
+            actualTarget: 'route:/done',
+            transitionObserved: true,
+            targetReady: false,
+            targetReason: 'GET /api/details → 501',
+            requestCheck: 'verified'
+          }
+        },
+        {
+          id: 'telemetry-ok',
+          source: 'route:/',
+          target: 'route:/done',
+          label: 'Telemetry',
+          evidence: {
+            status: 'confirmed',
+            actualPath: '/done',
+            actualTarget: 'route:/done',
+            transitionObserved: true,
+            targetReady: true,
+            requestCheck: 'verified',
+            backgroundFailure: { code: 'mock-response', message: 'GET /api/telemetry → 501' }
+          }
+        }
+      ]
+    }, 'route:/');
+    const rows = findEdgeRows(container);
+    const lateTexts = texts(rows.get('late-target-fail'));
+    assert.ok(lateTexts.includes('Готовность цели перехода не подтверждена'));
+    assert.ok(lateTexts.includes('GET /api/details → 501'));
+    const telemetryTexts = texts(rows.get('telemetry-ok'));
+    assert.ok(telemetryTexts.includes('Цель перехода готова'));
+    assert.ok(telemetryTexts.includes('Фоновая ошибка · GET /api/telemetry → 501'));
   });
 });
