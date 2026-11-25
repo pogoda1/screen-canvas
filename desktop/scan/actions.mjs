@@ -1,5 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
+import { interactiveSteps } from '../../core/graph-evidence.mjs';
 
 const buttons = 'button, [role=button], input[type=submit]';
 
@@ -31,7 +32,7 @@ export async function runAction(capture, edge, target, signal, { observeControl,
     return click(contents, query, begin, observeControl);
   }
   if (!Array.isArray(edge.steps) || edge.steps.length > 12) throw new Error('Invalid action steps');
-  const interactive = edge.steps.filter(step => step.type !== 'redirect');
+  const interactive = interactiveSteps(edge);
   for (const step of interactive) {
     signal.throwIfAborted();
     if (typeof step.selector !== 'string' || step.selector.length > 512) throw new Error('Invalid local action selector');

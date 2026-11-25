@@ -13,6 +13,20 @@ export function identifyNode(graph, pathname, reported) {
   if (routes[0] && (!routes[1] || rank(routes[0]) > rank(routes[1]))) return routes[0].id;
 }
 
+export function interactiveSteps(edge) {
+  return Array.isArray(edge?.steps) ? edge.steps.filter(step => step.type !== 'redirect') : [];
+}
+
+export function isMultiStepAction(edge) {
+  return interactiveSteps(edge).length > 1;
+}
+
+export function actionOriginReason({ redirects, multiStep, hasSourceFrame, sameScenario }) {
+  if (redirects) return 'automatic';
+  if (multiStep) return 'multi-step';
+  return hasSourceFrame && !sameScenario ? 'different-scenario' : 'control-not-in-frame';
+}
+
 export function edgeEvidence(edge, actualTarget, requests, reason, actualPath) {
   const evidence = { status: actualTarget === edge.target && !reason ? 'confirmed' : 'unverified', requests };
   if (edge.expectedPath) evidence.expectedPath = edge.expectedPath;

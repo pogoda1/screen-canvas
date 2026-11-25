@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { captureEvidence, captureExpectation, localRequests } from '../core/graph-evidence.mjs';
+import { actionOriginReason, captureEvidence, captureExpectation, isMultiStepAction, localRequests } from '../core/graph-evidence.mjs';
 
 const source = { id: 'route:/entry', path: '/entry' };
 const complete = { source: source.id, role: 'complete', target: 'route:/detail/:slug', path: '/detail/first' };
@@ -64,4 +64,24 @@ test('failed or pending raw requests block capture without preserving unsafe det
   assert.equal(reason(records).message, 'POST /api/books:search → 501');
   assert.equal(reason([{ method: 'GET', path: '/api/books?key=hidden', status: 501 }]).message, 'A local request failed → 501');
   assert.equal(reason([{ method: 'GET', path: '/api/books', status: 0 }]).code, 'request-pending');
+});
+
+test('multi-step actions receive a dedicated screen origin reason without altering single-step fallbacks', () => {
+  assert.equal(isMultiStepAction({ steps: [{ type: 'click', selector: '#a' }, { type: 'click', selector: '#submit' }] }), true);
+  assert.equal(isMultiStepAction({ steps: [
+    { type: 'click', selector: '#a' }, { type: 'click', selector: '#b' }, { type: 'click', selector: '#submit' }
+  ] }), true);
+  assert.equal(isMultiStepAction({ steps: [{ type: 'fill', selector: '#q', value: 'x' }, { type: 'click', selector: '#submit' }] }), true);
+  assert.equal(isMultiStepAction({ steps: [{ type: 'click', selector: '#next' }] }), false);
+  assert.equal(isMultiStepAction({ steps: [{ type: 'click', selector: '#next' }, { type: 'redirect' }] }), false);
+  assert.equal(isMultiStepAction({ steps: [{ type: 'redirect' }] }), false);
+  assert.equal(isMultiStepAction({ action: 'link' }), false);
+
+  assert.equal(actionOriginReason({ redirects: false, multiStep: true, hasSourceFrame: true, sameScenario: true }), 'multi-step');
+  assert.equal(actionOriginReason({ redirects: false, multiStep: true, hasSourceFrame: true, sameScenario: false }), 'multi-step');
+  assert.equal(actionOriginReason({ redirects: false, multiStep: true, hasSourceFrame: false, sameScenario: false }), 'multi-step');
+  assert.equal(actionOriginReason({ redirects: true, multiStep: false, hasSourceFrame: true, sameScenario: true }), 'automatic');
+  assert.equal(actionOriginReason({ redirects: false, multiStep: false, hasSourceFrame: true, sameScenario: false }), 'different-scenario');
+  assert.equal(actionOriginReason({ redirects: false, multiStep: false, hasSourceFrame: true, sameScenario: true }), 'control-not-in-frame');
+  assert.equal(actionOriginReason({ redirects: false, multiStep: false, hasSourceFrame: false, sameScenario: false }), 'control-not-in-frame');
 });

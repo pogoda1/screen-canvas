@@ -84,7 +84,8 @@ function directionGroup(title, edges, neighborId, neighbors) {
     const originReasons = {
       automatic: 'автоматический переход',
       'different-scenario': 'роль или состояние отличаются от кадра',
-      'control-not-in-frame': 'элемент на исходном кадре не подтверждён'
+      'control-not-in-frame': 'элемент на исходном кадре не подтверждён',
+      'multi-step': 'Многошаговое действие'
     };
     const source = target && (evidence.origin ? 'Источник стрелки · Видимый элемент' :
       'Источник стрелки · Экран' + (originReasons[evidence.originReason] ? ' · ' + originReasons[evidence.originReason] : ''));

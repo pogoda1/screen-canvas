@@ -1,6 +1,6 @@
 import { setTimeout } from 'node:timers/promises';
 import { routeMatches } from '../../core/discovery/actions.mjs';
-import { captureEvidence, captureExpectation, edgeEvidence, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
+import { actionOriginReason, captureEvidence, captureExpectation, edgeEvidence, isMultiStepAction, localRequests, observedRedirect, requestFailure } from '../../core/graph-evidence.mjs';
 import { awaitScreen, CAPTURE_JOB_MS, captureControlFrame, createCapture, captureScreen, currentFrameMatches, refreshScreen } from './capture.mjs';
 import { matchControl } from './anchor.mjs';
 import { runAction } from './actions.mjs';
@@ -155,8 +155,9 @@ export async function crawlGraph(worker, graph, signal, update) {
         const sourceFrame = frames.get(edge.source);
         const screenshot = nodes.get(edge.source)?.screenshot;
         const sameScenario = sourceFrame?.key === capture.frameKey && sourceFrame.path === source.pathname;
-        originReason = sourceFrame && !sameScenario ? 'different-scenario' : 'control-not-in-frame';
-        const observeControl = sameScenario && screenshot && (async measure => {
+        const multiStep = isMultiStepAction(edge);
+        originReason = actionOriginReason({ redirects: false, multiStep, hasSourceFrame: Boolean(sourceFrame), sameScenario });
+        const observeControl = !multiStep && sameScenario && screenshot && (async measure => {
           const ready = await awaitScreen(capture, graph, jobSignal, {
             expected: edge.source, timeout: 1600, forCapture: true
           });
